@@ -262,6 +262,35 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+st.markdown(
+    """
+<style>
+@media (max-width: 760px) {
+    div[data-testid="column"] .stButton > button {
+        margin-top: 0.06rem !important;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+st.markdown(
+    """
+<style>
+@media (max-width: 760px) {
+    hr {
+        margin-top: 0.12rem !important;
+        margin-bottom: 0.12rem !important;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 def signed_class(value: float) -> str:
     try:
         value = float(value)
@@ -2184,23 +2213,31 @@ with st.expander("종목명/종목코드 검색해서 추가", expanded=True):
                 currency = row["currency"]
                 default_price = price_map.get(symbol)
 
-                c1, c2 = st.columns([3.2, 1.15])
+                c1, c2, c3 = st.columns([1.65, 1.35, 0.75], gap="small")
                 with c1:
                     st.markdown(
                         f"""
-<div class="mobile-card">
-  <div class="mobile-card-title">{name}</div>
-  <div class="mobile-card-sub">{symbol} · {currency} · 현재가 {format_money_by_currency(default_price, currency)}</div>
+<div style="padding:0.35rem 0 0.1rem 0; font-weight:800; font-size:0.95rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+{name}
 </div>
 """,
                         unsafe_allow_html=True,
                     )
                 with c2:
-                    st.write("")
+                    st.markdown(
+                        f"""
+<div style="padding:0.35rem 0 0.1rem 0; font-size:0.82rem; color:#777; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+현재가 {format_money_by_currency(default_price, currency)}
+</div>
+""",
+                        unsafe_allow_html=True,
+                    )
+                with c3:
                     if st.button("추가", key=f"add_stock_mobile_{symbol}_{i}", use_container_width=True):
                         add_manual_stock_row(row)
-                        st.success(f"{name} ({symbol}) 추가 완료")
+                        st.success(f"{name} 추가 완료")
                         st.rerun()
+                st.divider()
         else:
             header_cols = st.columns([1.1, 2.5, 0.8, 1.2, 0.8])
             header_cols[0].markdown("**종목코드**")
