@@ -162,6 +162,106 @@ def is_mobile_mode() -> bool:
     return bool(st.session_state.get("mobile_mode", True))
 
 
+
+st.markdown(
+    """
+<style>
+/* =========================
+   모바일 compact override
+   ========================= */
+@media (max-width: 760px) {
+    .block-container {
+        padding-left: 0.45rem !important;
+        padding-right: 0.45rem !important;
+        padding-top: 0.35rem !important;
+        padding-bottom: 1.2rem !important;
+    }
+
+    h1, h2, h3 {
+        margin-top: 0.25rem !important;
+        margin-bottom: 0.35rem !important;
+    }
+
+    p {
+        margin-bottom: 0.35rem !important;
+    }
+
+    div[data-testid="stVerticalBlock"] {
+        gap: 0.35rem !important;
+    }
+
+    div[data-testid="stHorizontalBlock"] {
+        gap: 0.35rem !important;
+    }
+
+    .stButton > button {
+        min-height: 34px !important;
+        height: 34px !important;
+        padding: 0.15rem 0.45rem !important;
+        border-radius: 10px !important;
+        font-size: 0.92rem !important;
+    }
+
+    [data-testid="stMetric"] {
+        padding: 0.45rem 0.55rem !important;
+        border-radius: 12px !important;
+    }
+
+    [data-testid="stMetricLabel"] {
+        font-size: 0.74rem !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        font-size: 0.98rem !important;
+    }
+
+    .mobile-card {
+        padding: 0.62rem 0.7rem !important;
+        margin-bottom: 0.45rem !important;
+        border-radius: 13px !important;
+    }
+
+    .mobile-card-title {
+        font-size: 0.98rem !important;
+        margin-bottom: 0.05rem !important;
+    }
+
+    .mobile-card-sub {
+        font-size: 0.76rem !important;
+        margin-bottom: 0.25rem !important;
+    }
+
+    .mobile-card-grid {
+        gap: 0.2rem 0.45rem !important;
+        font-size: 0.8rem !important;
+    }
+
+    .mobile-label {
+        font-size: 0.70rem !important;
+    }
+
+    .stNumberInput label {
+        font-size: 0.78rem !important;
+        margin-bottom: 0.1rem !important;
+    }
+
+    .stNumberInput input {
+        min-height: 34px !important;
+        height: 34px !important;
+        padding: 0.15rem 0.45rem !important;
+        font-size: 0.9rem !important;
+    }
+
+    div[data-testid="stExpander"] details summary {
+        padding-top: 0.35rem !important;
+        padding-bottom: 0.35rem !important;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 def signed_class(value: float) -> str:
     try:
         value = float(value)
@@ -1367,21 +1467,15 @@ def render_holdings_table(df: pd.DataFrame, title: str):
             currency = r.get("currency", "KRW")
             profit_loss = safe_float(r.get("profit_loss"), 0)
             profit_rate = safe_float(r.get("profit_rate"), 0)
-            daily_profit_loss = safe_float(r.get("daily_profit_loss"), None)
-            daily_profit_rate = safe_float(r.get("daily_profit_rate"), None)
 
             st.markdown(
                 f"""
 <div class="mobile-card">
   <div class="mobile-card-title">{r.get('name', '')}</div>
-  <div class="mobile-card-sub">{r.get('symbol', '')} · {r.get('source', '')} · {currency}</div>
+  <div class="mobile-card-sub">{r.get('symbol', '')} · {safe_float(r.get('quantity'), 0):g}주 · {currency}</div>
   <div class="mobile-card-grid">
-    <div><div class="mobile-label">수량</div><div class="mobile-value">{safe_float(r.get('quantity'), 0):g}</div></div>
-    <div><div class="mobile-label">비중</div><div class="mobile-value">{format_rate_percent(r.get('weight_in_market'))}</div></div>
-    <div><div class="mobile-label">평균 매입가</div><div class="mobile-value">{format_money_by_currency(r.get('avg_price'), currency)}</div></div>
     <div><div class="mobile-label">현재가</div><div class="mobile-value">{format_money_by_currency(r.get('current_price'), currency)}</div></div>
-    <div><div class="mobile-label">총 매입금액</div><div class="mobile-value">{format_money_by_currency(r.get('buy_amount'), currency)}</div></div>
-    <div><div class="mobile-label">총 평가금액</div><div class="mobile-value">{format_money_by_currency(r.get('eval_amount'), currency)}</div></div>
+    <div><div class="mobile-label">평가금액</div><div class="mobile-value">{format_money_by_currency(r.get('eval_amount'), currency)}</div></div>
     <div><div class="mobile-label">평가손익</div><div class="{signed_class(profit_loss)}">{format_money_by_currency(profit_loss, currency)}</div></div>
     <div><div class="mobile-label">수익률</div><div class="{signed_class(profit_rate)}">{format_rate_percent(profit_rate)}</div></div>
   </div>
@@ -1389,6 +1483,8 @@ def render_holdings_table(df: pd.DataFrame, title: str):
 """,
                 unsafe_allow_html=True,
             )
+        return
+
         return
 
     display = df.copy()
@@ -2088,19 +2184,23 @@ with st.expander("종목명/종목코드 검색해서 추가", expanded=True):
                 currency = row["currency"]
                 default_price = price_map.get(symbol)
 
-                st.markdown(
-                    f"""
+                c1, c2 = st.columns([3.2, 1.15])
+                with c1:
+                    st.markdown(
+                        f"""
 <div class="mobile-card">
   <div class="mobile-card-title">{name}</div>
   <div class="mobile-card-sub">{symbol} · {currency} · 현재가 {format_money_by_currency(default_price, currency)}</div>
 </div>
 """,
-                    unsafe_allow_html=True,
-                )
-                if st.button("이 종목 추가", key=f"add_stock_mobile_{symbol}_{i}", use_container_width=True):
-                    add_manual_stock_row(row)
-                    st.success(f"{name} ({symbol}) 추가 완료")
-                    st.rerun()
+                        unsafe_allow_html=True,
+                    )
+                with c2:
+                    st.write("")
+                    if st.button("추가", key=f"add_stock_mobile_{symbol}_{i}", use_container_width=True):
+                        add_manual_stock_row(row)
+                        st.success(f"{name} ({symbol}) 추가 완료")
+                        st.rerun()
         else:
             header_cols = st.columns([1.1, 2.5, 0.8, 1.2, 0.8])
             header_cols[0].markdown("**종목코드**")
@@ -2141,7 +2241,7 @@ if st.session_state.get("last_demo_mode", True):
         st.session_state["last_holdings"] = manual_holdings_live
 
 st.markdown("#### 수기 포트폴리오")
-st.caption("모바일에서는 카드별로 수량을 조정합니다. 수량/단가를 바꾸면 총 매입금액과 총 평가금액이 다시 계산됩니다.")
+st.caption("수량/단가 변경 시 총액이 바로 계산됩니다.")
 
 quick_df = normalize_manual_portfolio(st.session_state["manual_portfolio"])[
     ["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"]
@@ -2168,13 +2268,21 @@ else:
                 unsafe_allow_html=True,
             )
 
-            q1, q2, q3 = st.columns([1, 1.2, 1])
+            q1, q2, q3 = st.columns([0.75, 1.2, 0.75])
             if q1.button("－", key=f"m_qty_minus_{symbol}_{i}", use_container_width=True):
                 quick_df.loc[i, "quantity"] = max(0, qty - 1)
                 st.session_state["manual_portfolio"] = quick_df.copy()
                 st.rerun()
 
-            q2.metric("수량", f"{qty:g}")
+            q2.markdown(
+                f"""
+<div style="text-align:center; padding-top:0.15rem;">
+  <div style="font-size:0.72rem; color:#777;">수량</div>
+  <div style="font-size:1.15rem; font-weight:800;">{qty:g}</div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
 
             if q3.button("＋", key=f"m_qty_plus_{symbol}_{i}", use_container_width=True):
                 quick_df.loc[i, "quantity"] = qty + 1
@@ -2203,9 +2311,23 @@ else:
                 st.session_state["manual_portfolio"] = quick_df.copy()
                 st.rerun()
 
-            a1, a2 = st.columns(2)
-            a1.metric("총 매입금액", format_money_by_currency(qty * new_avg, currency))
-            a2.metric("총 평가금액", format_money_by_currency(qty * new_current, currency))
+            buy_amount = qty * new_avg
+            eval_amount = qty * new_current
+            profit = eval_amount - buy_amount
+
+            st.markdown(
+                f"""
+<div class="mobile-card" style="margin-top:-0.15rem;">
+  <div class="mobile-card-grid">
+    <div><div class="mobile-label">총 매입</div><div class="mobile-value">{format_money_by_currency(buy_amount, currency)}</div></div>
+    <div><div class="mobile-label">총 평가</div><div class="mobile-value">{format_money_by_currency(eval_amount, currency)}</div></div>
+    <div><div class="mobile-label">평가손익</div><div class="{signed_class(profit)}">{format_money_by_currency(profit, currency)}</div></div>
+    <div><div class="mobile-label">수익률</div><div class="{signed_class(profit)}">{format_rate_percent((profit / buy_amount * 100) if buy_amount else 0)}</div></div>
+  </div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
 
     else:
         header = st.columns([1.0, 1.8, 0.45, 0.7, 0.45, 1.1, 1.1, 1.1, 1.1])
