@@ -291,6 +291,57 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+st.markdown(
+    """
+<style>
+@media (max-width: 760px) {
+    /* 모바일에서도 st.columns를 가로로 유지 */
+    div[data-testid="stHorizontalBlock"] {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        gap: 0.25rem !important;
+    }
+
+    div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        width: auto !important;
+        min-width: 0 !important;
+        flex: 1 1 0 !important;
+    }
+
+    /* 검색 결과 행은 최대한 낮게 */
+    .mobile-search-name {
+        padding: 0.22rem 0 0.05rem 0;
+        font-weight: 800;
+        font-size: 0.92rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .mobile-search-price {
+        padding: 0.22rem 0 0.05rem 0;
+        font-size: 0.78rem;
+        color: #777;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-align: right;
+    }
+
+    .mobile-search-divider {
+        margin-top: 0.06rem;
+        margin-bottom: 0.06rem;
+        border-top: 1px solid rgba(49, 51, 63, 0.10);
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 def signed_class(value: float) -> str:
     try:
         value = float(value)
@@ -1366,14 +1417,54 @@ def get_effective_client() -> Optional[TossInvestClient]:
     return TossInvestClient(api_key=api_key, secret_key=secret_key, account_seq=account_seq)
 
 
+
+def get_kr_latest_close_prices(symbols: List[str]) -> Dict[str, Optional[float]]:
+    """
+    토스 API 현재가 조회가 안 될 때, 국장 종목은 pykrx 최근 종가로 보완합니다.
+    실시간 현재가는 아니지만 모바일 검색 결과에서 '-'만 뜨는 것을 방지하기 위한 fallback입니다.
+    """
+    result = {normalize_symbol(s): None for s in symbols}
+    kr_symbols = [normalize_symbol(s) for s in symbols if is_kr_symbol(normalize_symbol(s))]
+
+    if not kr_symbols:
+        return result
+
+    try:
+        from pykrx import stock
+    except Exception:
+        return result
+
+    # 오늘 포함 최근 14일 중 데이터가 있는 마지막 거래일 종가 사용
+    for d in pd.date_range(end=pd.Timestamp.today(), periods=14, freq="D")[::-1]:
+        date_str = d.strftime("%Y%m%d")
+        try:
+            ohlcv = stock.get_market_ohlcv_by_ticker(date_str, market="ALL")
+            if ohlcv is None or ohlcv.empty or "종가" not in ohlcv.columns:
+                continue
+
+            for symbol in kr_symbols:
+                if symbol in ohlcv.index:
+                    price = safe_float(ohlcv.loc[symbol, "종가"], None)
+                    if price is not None and price > 0:
+                        result[symbol] = float(price)
+
+            if any(result.get(s) is not None for s in kr_symbols):
+                break
+
+        except Exception:
+            continue
+
+    return result
+
+
 def batch_get_default_prices(symbols: List[str]) -> Dict[str, Optional[float]]:
     """
-    검색 결과 리스트 표시용 현재가 일괄 조회.
-    숨겨진 API 키 또는 화면 입력 API 키가 있으면 토스 현재가 API를 사용합니다.
-    없거나 실패하면 None을 반환해 화면에 '-'로 표시합니다.
+    검색 결과/수기 추가 시 사용할 기본 현재가 조회.
+    1순위: 토스 OpenAPI prices
+    2순위: 국장 종목 pykrx 최근 종가 fallback
     """
-    symbols = [normalize_symbol(s) for s in symbols if str(s).strip()]
-    result = {symbol: None for symbol in symbols}
+    symbols = [normalize_symbol(s) for s in symbols]
+    result: Dict[str, Optional[float]] = {s: None for s in symbols}
 
     client = get_effective_client()
     if client is not None and symbols:
@@ -1386,8 +1477,15 @@ def batch_get_default_prices(symbols: List[str]) -> Dict[str, Optional[float]]:
         except Exception:
             pass
 
-    return result
+    # 토스 API 조회 실패 또는 API 키 없음: 국장만 pykrx 최근 종가로 보완
+    missing_kr = [s for s, v in result.items() if v is None and is_kr_symbol(s)]
+    if missing_kr:
+        fallback = get_kr_latest_close_prices(missing_kr)
+        for symbol, price in fallback.items():
+            if result.get(symbol) is None and price is not None and price > 0:
+                result[symbol] = float(price)
 
+    return result
 
 
 def get_default_price_for_manual_stock(symbol: str):
@@ -2213,23 +2311,15 @@ with st.expander("종목명/종목코드 검색해서 추가", expanded=True):
                 currency = row["currency"]
                 default_price = price_map.get(symbol)
 
-                c1, c2, c3 = st.columns([1.65, 1.35, 0.75], gap="small")
+                c1, c2, c3 = st.columns([1.55, 1.25, 0.72], gap="small")
                 with c1:
                     st.markdown(
-                        f"""
-<div style="padding:0.35rem 0 0.1rem 0; font-weight:800; font-size:0.95rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-{name}
-</div>
-""",
+                        f"""<div class="mobile-search-name">{name}</div>""",
                         unsafe_allow_html=True,
                     )
                 with c2:
                     st.markdown(
-                        f"""
-<div style="padding:0.35rem 0 0.1rem 0; font-size:0.82rem; color:#777; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-현재가 {format_money_by_currency(default_price, currency)}
-</div>
-""",
+                        f"""<div class="mobile-search-price">현재가 {format_money_by_currency(default_price, currency)}</div>""",
                         unsafe_allow_html=True,
                     )
                 with c3:
@@ -2237,7 +2327,7 @@ with st.expander("종목명/종목코드 검색해서 추가", expanded=True):
                         add_manual_stock_row(row)
                         st.success(f"{name} 추가 완료")
                         st.rerun()
-                st.divider()
+                st.markdown('<div class="mobile-search-divider"></div>', unsafe_allow_html=True)
         else:
             header_cols = st.columns([1.1, 2.5, 0.8, 1.2, 0.8])
             header_cols[0].markdown("**종목코드**")
