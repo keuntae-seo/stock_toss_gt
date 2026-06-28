@@ -680,6 +680,98 @@ st.markdown(
 )
 
 
+
+
+# MANUAL_CARD_STYLE_PATCH_20260628
+st.markdown(
+    """
+<style>
+.manual-card {
+    border: 1px solid rgba(140, 140, 160, 0.34);
+    border-radius: 18px;
+    padding: 0.82rem 0.92rem;
+    margin: 0.48rem 0 0.18rem 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.060), rgba(255,255,255,0.022));
+    box-shadow: 0 8px 20px rgba(0,0,0,0.10);
+}
+.manual-card-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    gap: 0.7rem;
+    align-items: center;
+}
+.manual-card-name {
+    font-size: 1.04rem;
+    font-weight: 900;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.manual-card-sub {
+    margin-top: 0.34rem;
+    color: #9aa0aa;
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.manual-card-value {
+    text-align: right;
+    font-size: 1.02rem;
+    font-weight: 900;
+    line-height: 1.2;
+}
+.manual-card-profit {
+    text-align: right;
+    margin-top: 0.34rem;
+    font-size: 0.82rem;
+    font-weight: 850;
+    white-space: nowrap;
+}
+.manual-card-action .stButton > button {
+    margin-top: 0.12rem !important;
+    border-radius: 14px !important;
+    min-height: 2.25rem !important;
+    font-weight: 850 !important;
+}
+
+.manual-dropdown-detail {
+    margin-top: 0.15rem !important;
+}
+[data-testid="stExpander"] {
+    border-radius: 14px !important;
+    border-color: rgba(140, 140, 160, 0.34) !important;
+    background: rgba(255,255,255,0.015) !important;
+    margin-bottom: 0.65rem !important;
+}
+[data-testid="stExpander"] summary {
+    font-weight: 850 !important;
+}
+@media (max-width: 760px) {
+    .manual-card {
+        padding: 0.72rem 0.76rem;
+        border-radius: 16px;
+        margin: 0.38rem 0 0.14rem 0;
+    }
+    .manual-card-name {
+        font-size: 0.98rem;
+    }
+    .manual-card-sub,
+    .manual-card-profit {
+        font-size: 0.74rem;
+    }
+    .manual-card-value {
+        font-size: 0.94rem;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
 st.markdown(
     """
 <style>
@@ -923,11 +1015,10 @@ def demo_holdings() -> pd.DataFrame:
 
 
 def initial_manual_portfolio() -> pd.DataFrame:
+    # NO_DEFAULT_HOLDINGS_PATCH_20260628
+    # 수기 포트폴리오 최초 진입 시 삼성전자/애플 같은 기본 종목을 넣지 않습니다.
     return pd.DataFrame(
-        [
-            {"symbol": "005930", "name": "삼성전자", "market_label": "국장", "currency": "KRW", "quantity": 0, "avg_price": 80000.0, "current_price": 83000.0},
-            {"symbol": "AAPL", "name": "Apple Inc.", "market_label": "미장", "currency": "USD", "quantity": 0, "avg_price": 190.0, "current_price": 212.3},
-        ]
+        columns=["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"]
     )
 
 
@@ -1348,6 +1439,56 @@ def normalize_manual_portfolio(df: pd.DataFrame) -> pd.DataFrame:
     return df[["symbol", "name", "market_label", "market_country", "currency", "quantity", "avg_price", "current_price", "source"]]
 
 
+
+
+# INVESTOR_PYKRX_REQUIREMENTS_PATCH_20260628
+def get_recent_investor_value_for_symbol(stock_module: Any, symbol: str, investor_days: int) -> pd.DataFrame:
+    """pykrx 투자자별 순매수 데이터를 최근 N거래일 기준으로 안정적으로 조회합니다.
+
+    일부 환경에서는 짧은 달력일 구간에 휴장일이 많이 끼거나 detail=True 응답이 비어 있을 수 있어
+    조회 기간을 넉넉히 잡고 detail=True -> detail=False 순서로 재시도합니다.
+    """
+    symbol = normalize_symbol(symbol)
+    lookback_days = max(45, investor_days * 12)
+    start = days_ago_yyyymmdd(lookback_days)
+    end = today_yyyymmdd()
+
+    last_error = None
+    for detail in (True, False):
+        try:
+            df = stock_module.get_market_trading_value_by_date(start, end, symbol, detail=detail)
+            if df is None or df.empty:
+                continue
+
+            df = df.tail(investor_days).reset_index()
+            date_col = df.columns[0]
+            df = df.rename(columns={date_col: "date"})
+            df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+            df = df.dropna(subset=["date"])
+            df["symbol"] = symbol
+
+            keep_cols = ["date", "symbol"]
+            preferred_cols = [
+                "개인", "외국인", "외국인합계", "기관합계", "금융투자", "보험", "투신",
+                "사모", "은행", "기타금융", "연기금", "기타법인", "전체",
+            ]
+            for col in preferred_cols:
+                if col in df.columns and col not in keep_cols:
+                    keep_cols.append(col)
+
+            if len(keep_cols) <= 2:
+                continue
+
+            return df[keep_cols]
+        except Exception as e:
+            last_error = e
+            continue
+
+    if last_error is not None:
+        raise last_error
+    return pd.DataFrame()
+
+
 def enrich_holdings(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -1587,7 +1728,19 @@ def get_daily_candles_df(
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["close"] = pd.to_numeric(df["close"], errors="coerce")
     df = df.dropna(subset=["date", "close"]).sort_values(["symbol", "date"])
-    df = df.drop_duplicates(["symbol", "date"], keep="last").reset_index(drop=True)
+    df = df.drop_duplicates(["symbol", "date"], keep="last")
+
+    # DAILY_CANDLE_LIMIT_PATCH_20260628
+    # 일부 API 응답은 count 값을 줘도 과거 전체 일봉을 함께 내려주는 경우가 있어,
+    # 화면에 그리기 직전에 종목별 최신 chart_days개만 강제로 남깁니다.
+    # 이렇게 해야 '최근 20일' 설정일 때 2018년부터의 전체 차트가 그려지지 않습니다.
+    df = (
+        df.sort_values(["symbol", "date"])
+        .groupby("symbol", group_keys=False)
+        .tail(chart_days)
+        .reset_index(drop=True)
+    )
+
     df["date"] = df["date"].dt.strftime("%Y-%m-%d")
 
     return df, "\n".join(errors) if errors else None
@@ -1606,6 +1759,9 @@ def get_investor_trends_df(holdings: pd.DataFrame, demo_mode: bool, investor_day
         .tolist()
     )
 
+    # pykrx는 6자리 순수 숫자 종목코드만 안정적으로 조회됩니다.
+    kr_symbols = [sym for sym in kr_symbols if is_kr_symbol(sym)]
+
     if not kr_symbols:
         return pd.DataFrame(), "국장 보유 종목이 없어 투자자별 순매수 데이터를 표시하지 않습니다."
 
@@ -1617,39 +1773,26 @@ def get_investor_trends_df(holdings: pd.DataFrame, demo_mode: bool, investor_day
     try:
         from pykrx import stock
     except Exception:
-        return pd.DataFrame(), "pykrx가 설치되어 있지 않습니다. `pip install pykrx` 후 다시 실행하세요."
-
-    # 거래일 기준 n일을 확보하기 위해 달력일은 넉넉히 조회
-    start = days_ago_yyyymmdd(max(14, investor_days * 4))
-    end = today_yyyymmdd()
+        return pd.DataFrame(), "투자자별 순매수 조회에 필요한 pykrx가 설치되어 있지 않습니다. `pip install -r requirements.txt` 또는 `pip install pykrx` 후 다시 실행하세요."
 
     result_frames = []
     errors = []
 
     for symbol in kr_symbols:
         try:
-            df = stock.get_market_trading_value_by_date(start, end, symbol, detail=True)
+            df = get_recent_investor_value_for_symbol(stock, symbol, investor_days)
             if df is None or df.empty:
+                errors.append(f"{symbol}: 최근 투자자별 순매수 응답이 비어 있습니다.")
                 continue
-
-            df = df.tail(investor_days).reset_index()
-            date_col = df.columns[0]
-            df = df.rename(columns={date_col: "date"})
-            df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
-            df["symbol"] = symbol
-
-            keep_cols = ["date", "symbol"]
-            for col in ["개인", "외국인", "기관합계", "금융투자", "보험", "투신", "사모", "은행", "기타금융", "연기금"]:
-                if col in df.columns:
-                    keep_cols.append(col)
-
-            result_frames.append(df[keep_cols])
-
+            result_frames.append(df)
         except Exception as e:
             errors.append(f"{symbol}: {e}")
 
     if not result_frames:
-        return pd.DataFrame(), "\n".join(errors) if errors else "투자자별 순매수 데이터가 없습니다."
+        msg = "API 계좌 국장 보유 종목의 투자자별 순매수 데이터를 가져오지 못했습니다."
+        if errors:
+            msg += "\n" + "\n".join(errors)
+        return pd.DataFrame(), msg
 
     out = pd.concat(result_frames, ignore_index=True)
     return out, "\n".join(errors) if errors else None
@@ -2105,6 +2248,16 @@ def render_allocation_charts(df: pd.DataFrame, title_prefix: str):
 
     chart_df["종목"] = chart_df["name"] + " (" + chart_df["symbol"] + ")"
 
+    # TREEMAP_MARKET_COLOR_KRW_PATCH_20260628
+    # 종합 트리맵에서는 국장/미장을 함께 보여주기 위해 평가금액을 원화 기준으로 맞춥니다.
+    # 색상은 막대그래프와 동일하게 수익률 양수=빨간색, 음수=파란색 기준으로 표시합니다.
+    chart_value_col = "eval_amount_krw" if "eval_amount_krw" in chart_df.columns else "eval_amount"
+    chart_df[chart_value_col] = pd.to_numeric(chart_df[chart_value_col], errors="coerce").fillna(0)
+    if chart_value_col == "eval_amount_krw":
+        chart_df["표시평가금액"] = chart_df["eval_amount_krw"]
+    else:
+        chart_df["표시평가금액"] = chart_df["eval_amount"]
+
     chart_left, chart_right = st.columns([1.2, 1])
 
     with chart_left:
@@ -2113,28 +2266,74 @@ def render_allocation_charts(df: pd.DataFrame, title_prefix: str):
         fig_tree = px.treemap(
             chart_df,
             path=path_cols,
-            values="eval_amount",
+            values=chart_value_col,
             color="profit_rate",
+            color_continuous_scale=[
+                [0.0, "#2f80ed"],
+                [0.5, "#8b949e"],
+                [1.0, "#ff4b4b"],
+            ],
+            color_continuous_midpoint=0,
             hover_data={
                 "symbol": True,
+                "market_label": True,
                 "currency": True,
                 "eval_amount": ":,.2f",
+                "표시평가금액": ":,.0f",
                 "profit_rate": ":.2f",
             },
             title=f"{title_prefix} 인터랙티브 트리맵",
+            labels={
+                "profit_rate": "수익률(%)",
+                chart_value_col: "원화환산 평가금액" if chart_value_col == "eval_amount_krw" else "평가금액",
+                "market_label": "시장",
+            },
         )
-        fig_tree.update_traces(textinfo="label+percent parent+value")
+        fig_tree.update_traces(
+            textinfo="label+percent parent+value",
+            texttemplate="%{label}<br>%{value:,.0f}원<br>%{color:+.1f}%",
+        )
+        fig_tree.update_layout(coloraxis_colorbar_title="수익률(%)")
         st.plotly_chart(fig_tree, use_container_width=True)
 
     with chart_right:
+        # PROFIT_RATE_WIDTH_COLOR_PATCH_20260628
+        # 평가금액 막대가 아니라 수익률(%) 막대로 표시합니다.
+        # 수익률이 클수록 막대가 길어지고, 양수는 빨간색 / 음수는 파란색으로 표시합니다.
+        rate_df = chart_df.copy()
+        rate_df["수익구분"] = rate_df["profit_rate"].apply(
+            lambda v: "수익" if v > 0 else ("손실" if v < 0 else "보합")
+        )
+        rate_df = rate_df.sort_values("profit_rate", ascending=True)
+
         fig_bar = px.bar(
-            chart_df.sort_values("eval_amount", ascending=True),
-            x="eval_amount",
+            rate_df,
+            x="profit_rate",
             y="종목",
             orientation="h",
-            color="profit_rate",
-            title=f"{title_prefix} 평가금액 순위",
-            labels={"eval_amount": "평가금액", "종목": "종목", "profit_rate": "수익률(%)"},
+            color="수익구분",
+            color_discrete_map={"수익": "#ff4b4b", "손실": "#2f80ed", "보합": "#8b949e"},
+            title=f"{title_prefix} 수익률 순위",
+            labels={"profit_rate": "수익률(%)", "종목": "종목", "수익구분": "구분"},
+            text=rate_df["profit_rate"].map(lambda v: f"{v:+.1f}%"),
+            hover_data={
+                "eval_amount": ":,.0f",
+                "profit_loss": ":,.0f",
+                "profit_rate": ":.2f",
+            },
+        )
+        fig_bar.update_traces(textposition="outside", cliponaxis=False)
+        fig_bar.update_layout(
+            xaxis_title="수익률(%)",
+            yaxis_title="종목",
+            legend_title_text="수익률",
+            margin=dict(l=20, r=80, t=60, b=40),
+        )
+        fig_bar.update_xaxes(
+            zeroline=True,
+            zerolinewidth=2,
+            zerolinecolor="rgba(255,255,255,0.45)",
+            ticksuffix="%",
         )
         st.plotly_chart(fig_bar, use_container_width=True)
 
@@ -2256,6 +2455,7 @@ def render_manual_detail_page(quick_df: pd.DataFrame, selected_symbol: str, sect
     with back_col:
         if st.button("‹", key=f"{section_key}_manual_back_{symbol}", use_container_width=True):
             st.session_state["selected_manual_symbol"] = None
+            st.session_state["manual_detail_only_mode"] = False
             clear_query_params_safe()
             st.rerun()
     with title_col:
@@ -2290,28 +2490,21 @@ def render_manual_detail_page(quick_df: pd.DataFrame, selected_symbol: str, sect
         unsafe_allow_html=True,
     )
 
-    st.caption("수량은 +/-로 조정하고, 평균 매매가와 현재가는 아래 입력칸에서 수정합니다.")
+    st.caption("수량, 평균 매매가, 현재가는 아래 입력칸에서 +/- 버튼으로 수정합니다.")
 
-    minus_col, qty_col, plus_col = st.columns([0.8, 2.4, 0.8], gap="small")
-    with minus_col:
-        if st.button("－", key=f"{section_key}_detail_qty_minus_{symbol}", use_container_width=True):
-            quick_df.loc[i, "quantity"] = max(0, qty - 1)
-            sync_manual_df(quick_df)
-            st.rerun()
-    with qty_col:
-        st.markdown(
-            f"""
-<div style="text-align:center;font-weight:900;padding-top:0.45rem;">
-  보유 수량 {qty:g}주
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-    with plus_col:
-        if st.button("＋", key=f"{section_key}_detail_qty_plus_{symbol}", use_container_width=True):
-            quick_df.loc[i, "quantity"] = qty + 1
-            sync_manual_df(quick_df)
-            st.rerun()
+    # MANUAL_CARD_AND_QTY_PATCH_20260628
+    # 카드 목록 UI는 유지하고, 보유 수량만 평균 매매가/현재가와 같은 number_input 형태로 표시합니다.
+    new_qty = st.number_input(
+        "보유 수량",
+        min_value=0,
+        value=int(qty),
+        step=1,
+        key=f"{section_key}_detail_quantity_{symbol}",
+    )
+    if float(new_qty) != float(qty):
+        quick_df.loc[i, "quantity"] = float(new_qty)
+        sync_manual_df(quick_df)
+        st.rerun()
 
     p1, p2 = st.columns(2, gap="small")
     new_avg = p1.number_input(
@@ -2336,6 +2529,69 @@ def render_manual_detail_page(quick_df: pd.DataFrame, selected_symbol: str, sect
         st.rerun()
 
 
+
+def render_manual_detail_dropdown(quick_df: pd.DataFrame, i: int, row: pd.Series, section_key: str):
+    """카드 아래 expander 안에 표시되는 인라인 상세 수정 영역."""
+    symbol = str(row["symbol"])
+    name = str(row["name"])
+    currency = str(row["currency"])
+    market = str(row.get("market_label", market_label(symbol=symbol, currency=currency)))
+    qty = safe_float(row.get("quantity"), 0)
+    avg_price = safe_float(row.get("avg_price"), 0)
+    current_price = safe_float(row.get("current_price"), 0)
+    buy_amount = qty * avg_price
+    eval_amount = qty * current_price
+    profit = eval_amount - buy_amount
+    profit_rate = (profit / buy_amount * 100) if buy_amount else 0
+    step_price = price_step_by_currency(currency)
+
+    # MANUAL_DROPDOWN_INPUT_ONLY_PATCH_20260628
+    # 상세 보기 드롭다운에서는 요약 텍스트/평가 카드 없이 수정 입력칸만 표시합니다.
+    new_qty = st.number_input(
+        "보유 수량",
+        min_value=0,
+        value=int(qty),
+        step=1,
+        key=f"{section_key}_dropdown_quantity_{symbol}_{i}",
+    )
+
+    p1, p2 = st.columns(2, gap="small")
+    new_avg = p1.number_input(
+        "평균 매매가",
+        min_value=0.0,
+        value=float(avg_price),
+        step=float(step_price),
+        key=f"{section_key}_dropdown_avg_price_{symbol}_{i}",
+    )
+    new_current = p2.number_input(
+        "현재가",
+        min_value=0.0,
+        value=float(current_price),
+        step=float(step_price),
+        key=f"{section_key}_dropdown_current_price_{symbol}_{i}",
+    )
+
+    if float(new_qty) != float(qty) or float(new_avg) != float(avg_price) or float(new_current) != float(current_price):
+        quick_df.loc[i, "quantity"] = float(new_qty)
+        quick_df.loc[i, "avg_price"] = float(new_avg)
+        quick_df.loc[i, "current_price"] = float(new_current)
+        sync_manual_df(quick_df)
+        st.rerun()
+
+    # MANUAL_DELETE_BUTTON_PATCH_20260628
+    # 상세 보기 드롭다운 안에서 해당 종목만 삭제할 수 있게 합니다.
+    st.divider()
+    if st.button(
+        f"{name} 삭제",
+        key=f"{section_key}_dropdown_delete_{symbol}_{i}",
+        use_container_width=True,
+    ):
+        next_df = quick_df.drop(index=i).reset_index(drop=True)
+        sync_manual_df(next_df)
+        st.success(f"{name} 삭제 완료")
+        st.rerun()
+
+
 def render_manual_portfolio_controls(section_key: str = "total"):
     """
     수기 포트폴리오 관리 UI.
@@ -2350,12 +2606,14 @@ def render_manual_portfolio_controls(section_key: str = "total"):
     except Exception:
         quick_df = pd.DataFrame(columns=["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"])
 
-    selected_symbol = get_query_param_value("manual_symbol") or st.session_state.get("selected_manual_symbol")
-    if selected_symbol:
-        st.session_state["selected_manual_symbol"] = normalize_symbol(selected_symbol)
-        render_manual_detail_page(quick_df, selected_symbol, section_key)
+    # MANUAL_DROPDOWN_DETAIL_PATCH_20260628
+    # 상세 보기는 새 페이지/URL 이동 없이 카드 바로 아래 expander(드롭다운)로 표시합니다.
+    # 기존 selected_manual_symbol 상태가 남아 있어도 일반 화면에서는 목록을 유지합니다.
+    if st.session_state.get("selected_manual_symbol") and st.session_state.get("manual_detail_only_mode"):
+        render_manual_detail_page(quick_df, st.session_state.get("selected_manual_symbol"), section_key)
     else:
-        st.caption("카드를 누르면 상세페이지에서 수량, 평균 매매가, 현재가를 조정할 수 있습니다.")
+        st.session_state["selected_manual_symbol"] = None
+        st.caption("상세 보기를 누르면 카드 아래에 드롭다운 형식으로 상세 내용을 표시합니다.")
 
         if quick_df.empty:
             st.info("수기 포트폴리오에 등록된 종목이 없습니다. 종목을 검색해서 추가하세요.")
@@ -2372,14 +2630,28 @@ def render_manual_portfolio_controls(section_key: str = "total"):
                 profit = eval_amount - buy_amount
                 profit_rate = (profit / buy_amount * 100) if buy_amount else 0
 
-                portfolio_card_link(
-                    href=f"?manual_symbol={symbol}",
-                    name=str(row["name"]),
-                    value_text=format_money_by_currency(eval_amount, currency),
-                    qty_text=f"{qty:g}주",
-                    profit_text=f"{format_money_by_currency(profit, currency)} ({profit_rate:+.1f}%)",
-                    profit_value=profit,
+                market_text = market_label(symbol=symbol, currency=currency)
+                st.markdown(
+                    f"""
+<div class="manual-card">
+  <div class="manual-card-grid">
+    <div>
+      <div class="manual-card-name">{str(row["name"])}</div>
+      <div class="manual-card-sub">{qty:g}주 · {market_text} · {symbol}</div>
+    </div>
+    <div>
+      <div class="manual-card-value">{format_money_by_currency(eval_amount, currency)}</div>
+      <div class="manual-card-profit {signed_class(profit)}">
+        {format_money_by_currency(profit, currency)} ({profit_rate:+.1f}%)
+      </div>
+    </div>
+  </div>
+</div>
+""",
+                    unsafe_allow_html=True,
                 )
+                with st.expander("상세 보기", expanded=False):
+                    render_manual_detail_dropdown(quick_df, i, row, section_key)
 
     col_refresh, col_save, col_reset = st.columns([1.4, 0.9, 1.6])
     with col_refresh:
@@ -2404,6 +2676,7 @@ def render_manual_portfolio_controls(section_key: str = "total"):
         if st.button("수기 포트폴리오 초기화", key=f"{section_key}_reset_manual", use_container_width=True):
             st.session_state["manual_portfolio"] = initial_manual_portfolio()
             st.session_state["selected_manual_symbol"] = None
+            st.session_state["manual_detail_only_mode"] = False
             clear_query_params_safe()
             st.success("초기화 완료")
             st.rerun()
@@ -2411,10 +2684,24 @@ def render_manual_portfolio_controls(section_key: str = "total"):
 
 def render_manual_portfolio_in_total_tab(exchange_rate):
     """
-    종합 탭의 기존 '종합 보유 종목' 자리에
-    수기 포트폴리오 목록을 표시합니다.
+    종합 탭에서 수기 포트폴리오 입력/수정 영역을 표시합니다.
+    API 조회 결과와 별도로 직접 추가한 종목을 관리하는 영역입니다.
     """
     render_manual_portfolio_controls(section_key="total_tab")
+
+
+def render_total_holdings_list(df: pd.DataFrame):
+    """
+    TOTAL_API_HOLDINGS_PATCH_20260628
+    API 조회 결과가 국장/미장 탭뿐 아니라 종합 탭에도 보이도록
+    전체 보유 종목 목록을 종합 탭에 표시합니다.
+    """
+    if df is None or df.empty:
+        st.info("종합 보유 종목이 없습니다.")
+        return
+
+    render_holdings_table(df, "종합 보유 종목")
+    render_allocation_charts(df, "종합")
 
 def normalize_exchange_rate_value(exchange_rate, default: float = 1350.0) -> float:
     """
@@ -2458,7 +2745,7 @@ def normalize_exchange_rate_value(exchange_rate, default: float = 1350.0) -> flo
     return float(default)
 
 
-def render_total_section(holdings: pd.DataFrame, exchange_rate):
+def render_total_section(holdings: pd.DataFrame, exchange_rate, show_manual_portfolio: bool = True):
     """
     종합 탭.
     상단의 총 평가금액 요약은 유지하고,
@@ -2470,7 +2757,8 @@ def render_total_section(holdings: pd.DataFrame, exchange_rate):
 
     if holdings is None or holdings.empty:
         st.info("보유 종목 데이터가 없습니다.")
-        render_manual_portfolio_in_total_tab(fx_rate)
+        if show_manual_portfolio:
+            render_manual_portfolio_in_total_tab(fx_rate)
         return
 
     df = holdings.copy()
@@ -2494,23 +2782,109 @@ def render_total_section(holdings: pd.DataFrame, exchange_rate):
     else:
         df["eval_amount_krw"] = pd.to_numeric(df["eval_amount_krw"], errors="coerce").fillna(0)
 
-    kr_total = safe_float(df.loc[df["market_label"] == "국장", "eval_amount"].sum(), 0)
-    us_total = safe_float(df.loc[df["market_label"] == "미장", "eval_amount"].sum(), 0)
+    # TOTAL_SUMMARY_DELTA_PATCH_20260628
+    # 종합 상단 카드에 평가금액뿐 아니라 +/- 평가손익도 함께 표시합니다.
+    # 국장은 원화 손익, 미장은 달러 손익, 종합은 원화환산 손익 기준입니다.
+    if "profit_loss" not in df.columns:
+        df["profit_loss"] = 0
+    if "buy_amount" not in df.columns:
+        df["buy_amount"] = 0
+
+    df["profit_loss"] = pd.to_numeric(df["profit_loss"], errors="coerce").fillna(0)
+    df["buy_amount"] = pd.to_numeric(df["buy_amount"], errors="coerce").fillna(0)
+
+    kr_mask = df["market_label"] == "국장"
+    us_mask = df["market_label"] == "미장"
+
+    kr_total = safe_float(df.loc[kr_mask, "eval_amount"].sum(), 0)
+    us_total = safe_float(df.loc[us_mask, "eval_amount"].sum(), 0)
     total_krw = safe_float(df["eval_amount_krw"].sum(), 0)
 
+    kr_profit = safe_float(df.loc[kr_mask, "profit_loss"].sum(), 0)
+    us_profit = safe_float(df.loc[us_mask, "profit_loss"].sum(), 0)
+    total_profit_krw = safe_float(
+        df.apply(
+            lambda r: safe_float(r.get("profit_loss"), 0) * (fx_rate if r.get("currency") == "USD" else 1),
+            axis=1,
+        ).sum(),
+        0,
+    )
+
+    kr_buy = safe_float(df.loc[kr_mask, "buy_amount"].sum(), 0)
+    us_buy = safe_float(df.loc[us_mask, "buy_amount"].sum(), 0)
+    total_buy_krw = safe_float(
+        df.apply(
+            lambda r: safe_float(r.get("buy_amount"), 0) * (fx_rate if r.get("currency") == "USD" else 1),
+            axis=1,
+        ).sum(),
+        0,
+    )
+
+    kr_rate = (kr_profit / kr_buy * 100) if kr_buy else 0
+    us_rate = (us_profit / us_buy * 100) if us_buy else 0
+    total_rate = (total_profit_krw / total_buy_krw * 100) if total_buy_krw else 0
+
     c1, c2, c3 = st.columns(3)
-    c1.metric("국장 평가금액", format_money_by_currency(kr_total, "KRW"))
-    c2.metric("미장 평가금액", format_money_by_currency(us_total, "USD"))
-    c3.metric("종합 원화환산", format_money_by_currency(total_krw, "KRW"))
+    c1.metric(
+        "국장 평가금액",
+        format_money_by_currency(kr_total, "KRW"),
+        delta=f"{format_money_by_currency(kr_profit, 'KRW')} ({kr_rate:+.1f}%)",
+    )
+    c2.metric(
+        "미장 평가금액",
+        format_money_by_currency(us_total, "USD"),
+        delta=f"{format_money_by_currency(us_profit, 'USD')} ({us_rate:+.1f}%)",
+    )
+    c3.metric(
+        "종합 원화환산",
+        format_money_by_currency(total_krw, "KRW"),
+        delta=f"{format_money_by_currency(total_profit_krw, 'KRW')} ({total_rate:+.1f}%)",
+    )
 
-    # 기존 '종합 보유 종목' 자리를 수기 포트폴리오 내용으로 완전 대체
-    render_manual_portfolio_in_total_tab(fx_rate)
+    # TOTAL_API_HOLDINGS_PATCH_20260628
+    # API 조회/수기/데모 결과의 전체 보유 종목을 종합 탭에도 표시합니다.
+    render_total_holdings_list(df)
 
-
-
-def render_daily_candles(candles_df: pd.DataFrame, holdings: pd.DataFrame, chart_days: int, error_message: Optional[str]):
     st.divider()
-    st.subheader(f"최근 {chart_days}일 일자별 종가 선 그래프")
+
+    # API_MODE_HIDE_MANUAL_AND_USE_API_INVESTOR_PATCH_20260628
+    # [API 조회] 결과 화면에서는 수기 포트폴리오 영역을 숨깁니다.
+    if show_manual_portfolio:
+        render_manual_portfolio_in_total_tab(fx_rate)
+
+
+
+def render_daily_candles(candles_df: pd.DataFrame, holdings: pd.DataFrame, chart_days: int, error_message: Optional[str], fx_rate: float = 1.0):
+    st.divider()
+
+    # DAILY_CANDLE_HEADER_CONTROL_PATCH_20260628
+    # "국장 보유 종목 최근 3 +/- 버튼 거래일 투자자별 순매수"와 같은 형태로
+    # 일봉 차트 제목도 "일자별 종가 선 그래프  최근 20 +/- 버튼  일" 구조로 표시합니다.
+    current_days = int(max(1, min(2000, int(st.session_state.get("chart_days", chart_days or 20)))))
+    header_left, days_input_col, header_right = st.columns([1.35, 0.9, 1.65], gap="small")
+    with header_left:
+        st.subheader("일자별 종가 선 그래프")
+    with days_input_col:
+        if "chart_days_input_hard" not in st.session_state:
+            st.session_state["chart_days_input_hard"] = current_days
+        input_days = st.number_input(
+            "일봉 차트 조회 일수",
+            min_value=1,
+            max_value=2000,
+            value=int(st.session_state.get("chart_days_input_hard", current_days)),
+            step=1,
+            key="chart_days_input_hard",
+            label_visibility="collapsed",
+        )
+    with header_right:
+        st.subheader("일")
+
+    if int(input_days) != int(st.session_state.get("chart_days", 20)):
+        st.session_state["chart_days"] = int(input_days)
+
+    effective_days = int(st.session_state.get("chart_days", input_days))
+    effective_days = int(max(1, min(2000, effective_days)))
+    st.caption(f"현재 설정: 최근 {effective_days}일만 표시")
 
     if error_message:
         st.warning(f"일부 종목 일봉 조회 실패:\n{error_message}")
@@ -2519,14 +2893,30 @@ def render_daily_candles(candles_df: pd.DataFrame, holdings: pd.DataFrame, chart
         st.info("일자별 종가 차트 데이터가 없습니다.")
         return
 
-    st.caption(f"현재 차트 포인트 수: {len(candles_df):,}개")
-
     name_map = holdings.set_index("symbol")["name"].to_dict()
     market_map = holdings.set_index("symbol")["market_label"].to_dict()
     candles_df = candles_df.copy()
     candles_df["name"] = candles_df["symbol"].map(name_map).fillna(candles_df["symbol"])
     candles_df["market_label"] = candles_df["symbol"].map(market_map).fillna("기타")
     candles_df["종목"] = candles_df["name"] + " (" + candles_df["symbol"] + ")"
+
+    # DAILY_CANDLE_KRW_AXIS_PATCH_20260628
+    # 일자별 종가 선 그래프의 Y축을 원화 기준으로 표시합니다.
+    # 국장은 종가를 그대로 원화로 사용하고, 미장은 현재 환율로 원화 환산해 표시합니다.
+    candles_df["close"] = pd.to_numeric(candles_df.get("close"), errors="coerce").fillna(0)
+    fx_rate_for_chart = safe_float(fx_rate, 1.0) or 1.0
+    candles_df["close_krw"] = candles_df.apply(
+        lambda r: safe_float(r.get("close"), 0) * fx_rate_for_chart if r.get("market_label") == "미장" else safe_float(r.get("close"), 0),
+        axis=1,
+    )
+    candles_df["원화환산 종가"] = candles_df["close_krw"].map(lambda v: f"{safe_float(v, 0):,.0f}원")
+
+    # API가 설정 일수보다 많은 데이터를 내려주더라도 화면에는 종목별 최신 N일만 표시합니다.
+    if "date" in candles_df.columns and "symbol" in candles_df.columns:
+        candles_df = candles_df.sort_values(["symbol", "date"])
+        candles_df = candles_df.groupby("symbol", group_keys=False).tail(effective_days).reset_index(drop=True)
+
+    st.caption(f"현재 차트 포인트 수: {len(candles_df):,}개")
 
     kr_df = candles_df[candles_df["market_label"] == "국장"].copy()
     us_df = candles_df[candles_df["market_label"] == "미장"].copy()
@@ -2540,12 +2930,15 @@ def render_daily_candles(candles_df: pd.DataFrame, holdings: pd.DataFrame, chart
             fig = px.line(
                 kr_df,
                 x="date",
-                y="close",
+                y="close_krw",
                 color="종목",
                 markers=True,
-                title=f"국장 보유 종목 최근 {chart_days}일 종가",
-                labels={"date": "날짜", "close": "종가"},
+                title=f"국장 보유 종목 최근 {effective_days}일 원화 종가",
+                labels={"date": "날짜", "close_krw": "종가(원)"},
+                hover_data={"원화환산 종가": True, "close_krw": False},
             )
+            fig.update_yaxes(tickformat=",", ticksuffix="원", separatethousands=True, title_text="종가(원)")
+            fig.update_traces(hovertemplate="날짜=%{x}<br>종목=%{fullData.name}<br>종가=%{customdata[0]}<extra></extra>")
             st.plotly_chart(fig, use_container_width=True)
 
     with tab_us:
@@ -2555,14 +2948,16 @@ def render_daily_candles(candles_df: pd.DataFrame, holdings: pd.DataFrame, chart
             fig = px.line(
                 us_df,
                 x="date",
-                y="close",
+                y="close_krw",
                 color="종목",
                 markers=True,
-                title=f"미장 보유 종목 최근 {chart_days}일 종가",
-                labels={"date": "날짜", "close": "종가"},
+                title=f"미장 보유 종목 최근 {effective_days}일 원화환산 종가",
+                labels={"date": "날짜", "close_krw": "원화환산 종가(원)"},
+                hover_data={"원화환산 종가": True, "close_krw": False, "close": ":.2f"},
             )
+            fig.update_yaxes(tickformat=",", ticksuffix="원", separatethousands=True, title_text="원화환산 종가(원)")
+            fig.update_traces(hovertemplate="날짜=%{x}<br>종목=%{fullData.name}<br>원화환산 종가=%{customdata[0]}<extra></extra>")
             st.plotly_chart(fig, use_container_width=True)
-
 
 
 
@@ -2808,6 +3203,41 @@ def get_manual_holdings_for_display() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def get_manual_kr_holdings_for_investor() -> pd.DataFrame:
+    """
+    MANUAL_INVESTOR_ONLY_PATCH_20260628
+    '국장 보유 종목 최근 ... 투자자별 순매수' 영역은
+    API/데모 보유 종목이 아니라 사용자가 수기 포트폴리오에 등록한
+    실제 보유 국장 종목만 기준으로 표시합니다.
+    """
+    manual_holdings = get_manual_holdings_for_display()
+    if manual_holdings.empty:
+        return pd.DataFrame()
+
+    out = manual_holdings.copy()
+    out["quantity"] = pd.to_numeric(out.get("quantity", 0), errors="coerce").fillna(0)
+    out = out[(out.get("market_label") == "국장") & (out["quantity"] > 0)].copy()
+    if out.empty:
+        return pd.DataFrame()
+
+    out["symbol"] = out["symbol"].astype(str).map(normalize_symbol)
+    return out.drop_duplicates("symbol").reset_index(drop=True)
+
+
+def filter_investor_df_to_manual_symbols(investor_df: pd.DataFrame, manual_kr_holdings: pd.DataFrame) -> pd.DataFrame:
+    """투자자별 순매수 데이터에서 수기 국장 보유 종목만 남깁니다."""
+    if investor_df is None or investor_df.empty or manual_kr_holdings is None or manual_kr_holdings.empty:
+        return pd.DataFrame()
+
+    allowed_symbols = set(manual_kr_holdings["symbol"].astype(str).map(normalize_symbol).tolist())
+    if not allowed_symbols or "symbol" not in investor_df.columns:
+        return pd.DataFrame()
+
+    out = investor_df.copy()
+    out["symbol"] = out["symbol"].astype(str).map(normalize_symbol)
+    return out[out["symbol"].isin(allowed_symbols)].reset_index(drop=True)
+
+
 def render_dashboard(
     holdings: pd.DataFrame,
     exchange_rate: Dict[str, Any],
@@ -2838,7 +3268,7 @@ def render_dashboard(
         tab_total, tab_kr, tab_us = st.tabs(["종합", "국장 보유종목", "미장 보유종목"])
 
         with tab_total:
-            render_total_section(holdings, exchange_rate)
+            render_total_section(holdings, exchange_rate, show_manual_portfolio=demo_mode)
 
         with tab_kr:
             render_market_section(holdings, "국장")
@@ -2846,20 +3276,52 @@ def render_dashboard(
         with tab_us:
             render_market_section(holdings, "미장")
 
-        st.subheader("CSV 다운로드")
-        csv = holdings.to_csv(index=False, encoding="utf-8-sig")
-        st.download_button(
-            "보유종목 CSV 다운로드",
-            data=csv.encode("utf-8-sig"),
-            file_name="portfolio_holdings.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+        # HIDE_CSV_DOWNLOAD_PATCH_20260628
+        # CSV 다운로드 UI는 요청에 따라 제거했습니다.
 
     investor_days_value = int(st.session_state.get("investor_days", 3))
-    investor_df = force_last_n_rows_by_symbol(investor_df, int(st.session_state.get("investor_days", 3)))
-    render_investor_trends(investor_df, investor_error, holdings=holdings, investor_days=investor_days_value)
-    render_daily_candles(daily_candles_df, holdings, chart_days, daily_candles_error)
+
+    # API_MODE_HIDE_MANUAL_AND_USE_API_INVESTOR_PATCH_20260628
+    # [API 조회] 결과 화면에서는 '국장 보유 종목 최근'을 실제 API 계좌 보유 종목 기준으로 표시합니다.
+    # 수기/데모 화면에서는 기존처럼 수기 포트폴리오의 국장 보유 종목만 기준으로 표시합니다.
+    investor_basis_holdings = pd.DataFrame()
+    investor_display_error = investor_error
+
+    if not demo_mode:
+        if holdings is not None and not holdings.empty:
+            investor_basis_holdings = holdings.copy()
+            investor_basis_holdings["quantity"] = pd.to_numeric(
+                investor_basis_holdings.get("quantity", 0), errors="coerce"
+            ).fillna(0)
+            investor_basis_holdings = investor_basis_holdings[
+                (investor_basis_holdings.get("market_label") == "국장")
+                & (investor_basis_holdings["quantity"] > 0)
+            ].copy()
+            if "symbol" in investor_basis_holdings.columns:
+                investor_basis_holdings["symbol"] = investor_basis_holdings["symbol"].astype(str).map(normalize_symbol)
+                investor_basis_holdings = investor_basis_holdings.drop_duplicates("symbol").reset_index(drop=True)
+
+        if investor_basis_holdings.empty:
+            investor_df = pd.DataFrame()
+            if not investor_display_error:
+                investor_display_error = "API 계좌에 보유 수량이 1주 이상인 국장 종목이 없어 투자자별 순매수 데이터를 표시하지 않습니다."
+        else:
+            investor_df = filter_investor_df_to_manual_symbols(investor_df, investor_basis_holdings)
+            investor_df = force_last_n_rows_by_symbol(investor_df, investor_days_value)
+            if investor_df.empty and not investor_display_error:
+                investor_display_error = "API 계좌의 국장 보유 종목에 대한 투자자별 순매수 데이터가 없습니다."
+    else:
+        manual_kr_holdings = get_manual_kr_holdings_for_investor()
+        investor_basis_holdings = manual_kr_holdings
+        investor_df = filter_investor_df_to_manual_symbols(investor_df, manual_kr_holdings)
+        investor_df = force_last_n_rows_by_symbol(investor_df, investor_days_value)
+        if manual_kr_holdings.empty:
+            investor_display_error = "수기 포트폴리오에 보유 수량이 1주 이상인 국장 종목이 없어 투자자별 순매수 데이터를 표시하지 않습니다."
+        elif investor_df.empty and not investor_display_error:
+            investor_display_error = "수기 포트폴리오의 국장 보유 종목에 대한 투자자별 순매수 데이터가 없습니다."
+
+    render_investor_trends(investor_df, investor_display_error, holdings=investor_basis_holdings, investor_days=investor_days_value)
+    render_daily_candles(daily_candles_df, holdings, chart_days, daily_candles_error, exchange_rate)
 
 
 # =========================
@@ -2903,13 +3365,24 @@ if "max_chart_symbols" not in st.session_state:
     st.session_state["max_chart_symbols"] = 10
 
 if "last_holdings" not in st.session_state:
-    st.session_state["last_holdings"] = enrich_holdings(demo_holdings())
+    # NO_DEFAULT_HOLDINGS_PATCH_20260628
+    # 앱 최초 로딩/API 조회 전에는 데모 종목을 기본 보유 종목으로 보여주지 않습니다.
+    st.session_state["last_holdings"] = enrich_holdings(pd.DataFrame(columns=[
+        "symbol", "name", "market_country", "market_label", "currency",
+        "quantity", "avg_price", "current_price", "source"
+    ]))
 
 if "last_api_holdings" not in st.session_state:
     st.session_state["last_api_holdings"] = pd.DataFrame()
 
 if "last_demo_mode" not in st.session_state:
     st.session_state["last_demo_mode"] = True
+
+# API_MODE_HIDE_MANUAL_INPUT_PATCH_20260628
+# 마지막으로 누른 조회 버튼의 종류를 저장합니다.
+# API 조회 후에는 수기 포트폴리오 입력 영역을 숨기기 위해 사용합니다.
+if "last_view_mode" not in st.session_state:
+    st.session_state["last_view_mode"] = "initial"
 
 if "last_error_message" not in st.session_state:
     st.session_state["last_error_message"] = None
@@ -2921,14 +3394,24 @@ if "last_exchange_error" not in st.session_state:
     st.session_state["last_exchange_error"] = None
 
 if "last_daily_candles_df" not in st.session_state:
-    st.session_state["last_daily_candles_df"] = demo_daily_candles(st.session_state["last_holdings"]["symbol"].tolist(), 20)
+    # NO_DEFAULT_HOLDINGS_PATCH_20260628
+    # 기본 종목이 없으므로 초기 차트 데이터도 비워 둡니다.
+    st.session_state["last_daily_candles_df"] = pd.DataFrame()
 
 if "last_daily_candles_error" not in st.session_state:
     st.session_state["last_daily_candles_error"] = None
 
 if "last_investor_df" not in st.session_state:
+    # MANUAL_INVESTOR_ONLY_PATCH_20260628
+    # 초기 화면에서도 투자자별 순매수는 데모 종목이 아니라 수기 국장 보유 종목만 사용합니다.
+    _initial_manual_for_investor = enrich_holdings(normalize_manual_portfolio(st.session_state.get("manual_portfolio", pd.DataFrame())))
+    if not _initial_manual_for_investor.empty:
+        _initial_manual_for_investor = _initial_manual_for_investor[
+            (_initial_manual_for_investor["market_label"] == "국장")
+            & (pd.to_numeric(_initial_manual_for_investor.get("quantity", 0), errors="coerce").fillna(0) > 0)
+        ]
     st.session_state["last_investor_df"] = demo_investor_trends(
-        st.session_state["last_holdings"].loc[st.session_state["last_holdings"]["market_label"] == "국장", "symbol"].tolist(),
+        _initial_manual_for_investor["symbol"].tolist() if not _initial_manual_for_investor.empty else [],
         st.session_state.get("investor_days", 3),
     )
 
@@ -2943,6 +3426,22 @@ elif "investor_days" not in st.session_state:
 
 if "last_refresh_time" not in st.session_state:
     st.session_state["last_refresh_time"] = ""
+
+
+# =========================
+# 수기 포트폴리오 상세 URL 단독 화면
+# =========================
+# MANUAL_DETAIL_ONLY_PATCH_20260628
+# 기존 링크가 브라우저에 남아 /?manual_symbol=005930 으로 들어오더라도
+# 메인 제목/입력/API/탭/차트가 렌더링되기 전에 여기서 상세 화면만 그리고 멈춥니다.
+_query_manual_symbol = get_query_param_value("manual_symbol") or get_query_param_value("holding_symbol")
+if _query_manual_symbol:
+    st.session_state["selected_manual_symbol"] = normalize_symbol(_query_manual_symbol)
+    st.session_state["manual_detail_only_mode"] = True
+
+if st.session_state.get("manual_detail_only_mode") and st.session_state.get("selected_manual_symbol"):
+    render_manual_portfolio_controls(section_key="manual_detail_only")
+    st.stop()
 
 
 # =========================
@@ -3005,47 +3504,12 @@ with st.sidebar:
     else:
         st.info("API 키가 없어도 수기 포트폴리오나 데모 데이터로 조회할 수 있습니다.")
 
-    st.divider()
-
-    st.subheader("차트 설정")
-    chart_days = st.number_input(
-        "일봉 차트 조회 일수",
-        min_value=1,
-        max_value=2000,
-        value=int(st.session_state["chart_days"]),
-        step=1,
-        help="예: 20, 120 등 원하는 일수를 입력하세요.",
-    )
-
-    max_chart_symbols = st.number_input(
-        "차트 조회 종목 수 제한",
-        min_value=1,
-        max_value=50,
-        value=int(st.session_state["max_chart_symbols"]),
-        step=1,
-        help="보유 종목이 많으면 차트가 무거워질 수 있어 제한합니다.",
-    )
-
-    st.session_state["chart_days"] = int(chart_days)
-    st.session_state["max_chart_symbols"] = int(max_chart_symbols)
-
-    # 투자자별 순매수 거래일 수는 해당 섹션 안의 +/- 버튼으로만 조정합니다.
-
-
-
-    include_manual = st.toggle(
-        "수기 포트폴리오 포함",
-        value=bool(st.session_state["include_manual_portfolio"]),
-        help="직접 입력한 종목/수량/매입가를 함께 포트폴리오에 반영합니다.",
-    )
+    # HIDE_SIDEBAR_CHART_SETTINGS_PATCH_20260628
+    # 차트 설정/수기 포트폴리오 포함/수기 종목 현재가 API 보완 UI는 화면에서 숨깁니다.
+    # 내부 기본값은 유지해서 기존 기능은 그대로 동작하게 합니다.
+    include_manual = bool(st.session_state.get("include_manual_portfolio", True))
     st.session_state["include_manual_portfolio"] = include_manual
-
-    auto_update_manual_price = st.toggle(
-        "수기 종목 현재가 API로 보완",
-        value=False,
-        disabled=not api_ready,
-        help="API 키가 있을 때 직접 입력한 종목의 현재가를 토스 현재가 API로 덮어씁니다.",
-    )
+    auto_update_manual_price = False
 
     st.divider()
 
@@ -3072,6 +3536,9 @@ with st.sidebar:
 
     if query_clicked:
         st.session_state["has_clicked_query"] = True
+        # API_MODE_HIDE_MANUAL_INPUT_PATCH_20260628
+        # API 조회 버튼을 누른 뒤에는 메인 화면의 수기 포트폴리오 입력 영역을 숨깁니다.
+        st.session_state["last_view_mode"] = "api"
 
         effective_api_key, effective_secret_key, effective_account_seq = get_effective_api_credentials()
         client = TossInvestClient(
@@ -3090,7 +3557,10 @@ with st.sidebar:
                 manual_df, manual_error = update_manual_prices_with_api(client, manual_df)
                 st.session_state["manual_portfolio"] = manual_df[["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"]].copy()
 
-            combined_raw = merge_portfolios(api_holdings_raw, st.session_state["manual_portfolio"], include_manual)
+            # API_MODE_HIDE_MANUAL_AND_USE_API_INVESTOR_PATCH_20260628
+            # [API 조회] 결과는 실제 API 계좌 보유 종목만 사용합니다.
+            # 수기 포트폴리오 종목은 합치지 않습니다.
+            combined_raw = api_holdings_raw
             holdings = enrich_holdings(combined_raw)
 
             exchange_rate, exchange_error = get_exchange_rate_data(client, demo_mode=False)
@@ -3102,8 +3572,20 @@ with st.sidebar:
                 max_chart_symbols=st.session_state["max_chart_symbols"],
                 sleep_sec=0.15,
             )
+            # API_HOLDINGS_INVESTOR_BASIS_PATCH_20260628
+            # [API 조회]를 누른 경우 투자자별 순매수는 수기 포트폴리오가 아니라
+            # 실제 API 계좌 보유 종목 중 국장 보유 종목을 기준으로 조회합니다.
+            investor_basis_holdings = holdings.copy()
+            if not investor_basis_holdings.empty:
+                investor_basis_holdings["quantity"] = pd.to_numeric(
+                    investor_basis_holdings.get("quantity", 0), errors="coerce"
+                ).fillna(0)
+                investor_basis_holdings = investor_basis_holdings[
+                    (investor_basis_holdings.get("market_label") == "국장")
+                    & (investor_basis_holdings["quantity"] > 0)
+                ].copy()
             investor_df, investor_error = get_investor_trends_df(
-                holdings,
+                investor_basis_holdings,
                 demo_mode=False,
                 investor_days=st.session_state.get("investor_days", 3),
             )
@@ -3126,6 +3608,7 @@ with st.sidebar:
 
     if manual_clicked:
         st.session_state["has_clicked_query"] = True
+        st.session_state["last_view_mode"] = "manual"
 
         manual_raw = normalize_manual_portfolio(st.session_state["manual_portfolio"])
         holdings = enrich_holdings(manual_raw)
@@ -3138,14 +3621,16 @@ with st.sidebar:
         st.session_state["last_exchange_error"] = None
         st.session_state["last_daily_candles_df"] = demo_daily_candles(holdings["symbol"].tolist(), st.session_state["chart_days"])
         st.session_state["last_daily_candles_error"] = "수기만 보기에서는 실제 일봉 API를 호출하지 않고 데모 차트를 표시합니다. 실제 차트가 필요하면 API 키로 조회하세요."
+        manual_investor_holdings = get_manual_kr_holdings_for_investor()
         st.session_state["last_investor_df"] = demo_investor_trends(
-            holdings.loc[holdings["market_label"] == "국장", "symbol"].tolist(),
+            manual_investor_holdings["symbol"].tolist() if not manual_investor_holdings.empty else [],
             st.session_state.get("investor_days", 3),
         )
         st.session_state["last_investor_error"] = None
 
     if demo_clicked:
         st.session_state["has_clicked_query"] = True
+        st.session_state["last_view_mode"] = "demo"
         holdings = enrich_holdings(demo_holdings())
 
         st.session_state["last_api_holdings"] = pd.DataFrame()
@@ -3156,8 +3641,9 @@ with st.sidebar:
         st.session_state["last_exchange_error"] = None
         st.session_state["last_daily_candles_df"] = demo_daily_candles(holdings["symbol"].tolist(), st.session_state["chart_days"])
         st.session_state["last_daily_candles_error"] = None
+        manual_investor_holdings = get_manual_kr_holdings_for_investor()
         st.session_state["last_investor_df"] = demo_investor_trends(
-            holdings.loc[holdings["market_label"] == "국장", "symbol"].tolist(),
+            manual_investor_holdings["symbol"].tolist() if not manual_investor_holdings.empty else [],
             st.session_state.get("investor_days", 3),
         )
         st.session_state["last_investor_error"] = None
@@ -3174,107 +3660,142 @@ with st.sidebar:
 # 수기 포트폴리오 입력
 # =========================
 
-st.subheader("수기 포트폴리오 입력")
+# API_MODE_HIDE_MANUAL_AND_USE_API_INVESTOR_PATCH_20260628
+# [API 조회] 결과 화면에서는 수기 포트폴리오 입력/수정 영역을 숨깁니다.
+# API_MODE_HIDE_MANUAL_INPUT_PATCH_20260628
+# API 조회 버튼을 누른 상태에서는 수기 포트폴리오 입력/검색 영역을 화면에 표시하지 않습니다.
+# 수기만 보기/데모 보기에서는 기존처럼 표시합니다.
+show_manual_input_area = st.session_state.get("last_view_mode") != "api"
 
-st.caption("종목 검색으로 추가한 뒤 아래 수량 +/- 표에서 수량을 조정합니다. 현재가/환율은 버튼으로 실제값 갱신할 수 있습니다.")
+if show_manual_input_area:
+    st.subheader("수기 포트폴리오 입력")
 
-with st.expander("종목명/종목코드 검색해서 추가", expanded=True):
-    # [추가] 버튼을 누른 뒤에는 검색창을 빈 값으로 초기화합니다.
-    # 위젯 생성 이후 session_state 값을 직접 바꾸면 Streamlit 오류가 날 수 있어
-    # 버튼 클릭 시 플래그만 세우고, 다음 rerun에서 위젯 생성 전에 초기화합니다.
-    if st.session_state.pop("clear_stock_search_keyword_live", False):
-        st.session_state["stock_search_keyword_live"] = ""
+    st.caption("종목 검색으로 추가한 뒤 아래 수량 +/- 표에서 수량을 조정합니다. 현재가/환율은 버튼으로 실제값 갱신할 수 있습니다.")
 
-    stock_keyword = live_search_input(
-        "검색어",
-        placeholder="예: 삼, 삼성, S, SK, SK스, AAPL",
-        key="stock_search_keyword_live",
-        help="입력하는 도중에 아래 후보 종목 리스트가 갱신됩니다.",
-    )
+    with st.expander("종목명/종목코드 검색해서 추가", expanded=True):
+        # [추가] 버튼을 누른 뒤에는 검색창을 빈 값으로 초기화합니다.
+        # 위젯 생성 이후 session_state 값을 직접 바꾸면 Streamlit 오류가 날 수 있어
+        # 버튼 클릭 시 플래그만 세우고, 다음 rerun에서 위젯 생성 전에 초기화합니다.
+        if st.session_state.pop("clear_stock_search_keyword_live", False):
+            st.session_state["stock_search_keyword_live"] = ""
 
-    # 시장 선택 탭/필터 제거: 전체 시장에서 자동 검색
-    search_results = search_stock_master(
-        stock_keyword,
-        "전체",
-        limit=30,
-    )
+        stock_keyword = live_search_input(
+            "검색어",
+            placeholder="예: 삼, 삼성, S, SK, SK스, AAPL",
+            key="stock_search_keyword_live",
+            help="입력하는 도중에 아래 후보 종목 리스트가 갱신됩니다.",
+        )
 
-    st.session_state["stock_search_results"] = search_results
+        # 시장 선택 탭/필터 제거: 전체 시장에서 자동 검색
+        search_results = search_stock_master(
+            stock_keyword,
+            "전체",
+            limit=30,
+        )
 
-    if not stock_keyword.strip():
-        st.info("검색어를 입력하는 도중에 후보 종목이 아래 리스트로 표시됩니다. 예: `삼` → 삼성전자/삼성전기/삼성화재, `SK스` → SK스퀘어.")
-    elif search_results.empty:
-        st.warning("검색 결과가 없습니다. 종목명 또는 종목코드를 다시 입력해보세요.")
-    else:
-        st.caption(f"검색 결과 {len(search_results):,}개 · 원하는 종목의 [추가] 버튼을 누르세요.")
+        st.session_state["stock_search_results"] = search_results
 
-        price_map = batch_get_default_prices(search_results["symbol"].tolist())
+        if not stock_keyword.strip():
+            st.info("검색어를 입력하는 도중에 후보 종목이 아래 리스트로 표시됩니다. 예: `삼` → 삼성전자/삼성전기/삼성화재, `SK스` → SK스퀘어.")
+        elif search_results.empty:
+            st.warning("검색 결과가 없습니다. 종목명 또는 종목코드를 다시 입력해보세요.")
+        else:
+            st.caption(f"검색 결과 {len(search_results):,}개 · 원하는 종목의 [추가] 버튼을 누르세요.")
 
-        if is_mobile_mode():
-            for i, row in search_results.iterrows():
-                symbol = row["symbol"]
-                name = row["name"]
-                currency = row["currency"]
-                default_price = price_map.get(symbol)
+            price_map = batch_get_default_prices(search_results["symbol"].tolist())
 
-                c1, c2 = st.columns([3.4, 0.75], gap="small")
-                with c1:
-                    st.markdown(
-                        f"""
-<div class="search-row" style="border-bottom:0;">
-  <div class="search-name">{name}</div>
-  <div class="search-price">현재가 {format_money_by_currency(default_price, currency)}</div>
-</div>
-""",
-                        unsafe_allow_html=True,
-                    )
-                with c2:
-                    if st.button("추가", key=f"add_stock_mobile_{symbol}_{i}", use_container_width=True):
+            if is_mobile_mode():
+                for i, row in search_results.iterrows():
+                    symbol = row["symbol"]
+                    name = row["name"]
+                    currency = row["currency"]
+                    default_price = price_map.get(symbol)
+
+                    c1, c2 = st.columns([3.4, 0.75], gap="small")
+                    with c1:
+                        st.markdown(
+                            f"""
+    <div class="search-row" style="border-bottom:0;">
+      <div class="search-name">{name}</div>
+      <div class="search-price">현재가 {format_money_by_currency(default_price, currency)}</div>
+    </div>
+    """,
+                            unsafe_allow_html=True,
+                        )
+                    with c2:
+                        if st.button("추가", key=f"add_stock_mobile_{symbol}_{i}", use_container_width=True):
+                            add_manual_stock_row(row)
+                            st.session_state["clear_stock_search_keyword_live"] = True
+                            st.success(f"{name} 추가 완료")
+                            st.rerun()
+                    st.markdown('<div style="border-bottom:1px solid rgba(140,140,160,0.22); margin:0.08rem 0;"></div>', unsafe_allow_html=True)
+            else:
+                header_cols = st.columns([1.1, 2.5, 0.8, 1.2, 0.8])
+                header_cols[0].markdown("**종목코드**")
+                header_cols[1].markdown("**종목명**")
+                header_cols[2].markdown("**통화**")
+                header_cols[3].markdown("**현재가/기본가**")
+                header_cols[4].markdown("**추가**")
+
+                for i, row in search_results.iterrows():
+                    symbol = row["symbol"]
+                    name = row["name"]
+                    currency = row["currency"]
+                    default_price = price_map.get(symbol)
+
+                    row_cols = st.columns([1.1, 2.5, 0.8, 1.2, 0.8])
+                    row_cols[0].write(symbol)
+                    row_cols[1].write(name)
+                    row_cols[2].write(currency)
+                    row_cols[3].write(format_money_by_currency(default_price, currency))
+
+                    if row_cols[4].button("추가", key=f"add_stock_{symbol}_{i}", use_container_width=True):
                         add_manual_stock_row(row)
                         st.session_state["clear_stock_search_keyword_live"] = True
-                        st.success(f"{name} 추가 완료")
+                        st.success(f"{name} ({symbol}) 추가 완료")
                         st.rerun()
-                st.markdown('<div style="border-bottom:1px solid rgba(140,140,160,0.22); margin:0.08rem 0;"></div>', unsafe_allow_html=True)
-        else:
-            header_cols = st.columns([1.1, 2.5, 0.8, 1.2, 0.8])
-            header_cols[0].markdown("**종목코드**")
-            header_cols[1].markdown("**종목명**")
-            header_cols[2].markdown("**통화**")
-            header_cols[3].markdown("**현재가/기본가**")
-            header_cols[4].markdown("**추가**")
 
-            for i, row in search_results.iterrows():
-                symbol = row["symbol"]
-                name = row["name"]
-                currency = row["currency"]
-                default_price = price_map.get(symbol)
+            st.caption("추가 시 API 키가 있으면 실제 현재가가 현재가/매입가 기본값으로 들어갑니다. API 키가 없거나 조회 실패 시 0으로 들어가며 직접 수정할 수 있습니다.")
 
-                row_cols = st.columns([1.1, 2.5, 0.8, 1.2, 0.8])
-                row_cols[0].write(symbol)
-                row_cols[1].write(name)
-                row_cols[2].write(currency)
-                row_cols[3].write(format_money_by_currency(default_price, currency))
+    # 수기 포트폴리오는 종합 탭 안에서만 표시/수정합니다.
+    # 여기서는 데이터 정규화와 데모/수기 화면의 계산값 동기화만 수행합니다.
+    normalized_manual_editor = normalize_manual_portfolio(st.session_state["manual_portfolio"])[
+        ["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"]
+    ]
+    st.session_state["manual_portfolio"] = normalized_manual_editor.copy()
 
-                if row_cols[4].button("추가", key=f"add_stock_{symbol}_{i}", use_container_width=True):
-                    add_manual_stock_row(row)
-                    st.session_state["clear_stock_search_keyword_live"] = True
-                    st.success(f"{name} ({symbol}) 추가 완료")
-                    st.rerun()
-
-        st.caption("추가 시 API 키가 있으면 실제 현재가가 현재가/매입가 기본값으로 들어갑니다. API 키가 없거나 조회 실패 시 0으로 들어가며 직접 수정할 수 있습니다.")
-
-# 수기 포트폴리오는 종합 탭 안에서만 표시/수정합니다.
-# 여기서는 데이터 정규화와 데모/수기 화면의 계산값 동기화만 수행합니다.
-normalized_manual_editor = normalize_manual_portfolio(st.session_state["manual_portfolio"])[
-    ["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"]
-]
-st.session_state["manual_portfolio"] = normalized_manual_editor.copy()
-
-# 현재 화면이 수기/데모 기반이면, 아래 대시보드 계산값이 즉시 바뀌게 반영
-if st.session_state.get("last_demo_mode", True):
+    # MANUAL_INVESTOR_LIVE_SYNC_PATCH_20260628
+    # 수기 포트폴리오에서 국장 종목 수량을 추가/변경하면,
+    # 사이드바의 [수기만 보기] 버튼을 다시 누르지 않아도
+    # '국장 보유 종목 최근 ... 투자자별 순매수' 영역이 즉시 갱신되도록 동기화합니다.
     manual_holdings_live = enrich_holdings(normalized_manual_editor)
-    if not manual_holdings_live.empty:
-        st.session_state["last_holdings"] = manual_holdings_live
+    if st.session_state.get("last_demo_mode", True):
+        if not manual_holdings_live.empty:
+            st.session_state["last_holdings"] = manual_holdings_live
+
+        manual_kr_live = manual_holdings_live.copy()
+        if not manual_kr_live.empty:
+            manual_kr_live["quantity"] = pd.to_numeric(manual_kr_live.get("quantity", 0), errors="coerce").fillna(0)
+            manual_kr_live = manual_kr_live[
+                (manual_kr_live.get("market_label") == "국장")
+                & (manual_kr_live["quantity"] > 0)
+            ].copy()
+
+        if not manual_kr_live.empty:
+            investor_days_live = int(st.session_state.get("investor_days", 3))
+            manual_symbols_live = manual_kr_live["symbol"].astype(str).map(normalize_symbol).drop_duplicates().tolist()
+            current_inv = st.session_state.get("last_investor_df", pd.DataFrame())
+            current_symbols = set()
+            if isinstance(current_inv, pd.DataFrame) and not current_inv.empty and "symbol" in current_inv.columns:
+                current_symbols = set(current_inv["symbol"].astype(str).map(normalize_symbol).unique().tolist())
+
+            # 기존 투자자별 데이터가 비어 있거나, 새로 추가한 수기 국장 종목이 빠져 있으면 즉시 재생성합니다.
+            if not current_symbols or not set(manual_symbols_live).issubset(current_symbols):
+                st.session_state["last_investor_df"] = demo_investor_trends(manual_symbols_live, investor_days_live)
+                st.session_state["last_investor_error"] = None
+        else:
+            st.session_state["last_investor_df"] = pd.DataFrame()
+            st.session_state["last_investor_error"] = None
 
 # =========================
 # 메인 화면
