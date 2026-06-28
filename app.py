@@ -2214,18 +2214,134 @@ def portfolio_card_link(
     )
 
 
+def price_step_by_currency(currency: str) -> float:
+    """단가 조정 단위. 국장/KRW는 100원, 미장/USD는 1달러 단위."""
+    return 100.0 if str(currency or "KRW").upper() == "KRW" else 1.0
+
+
+def sync_manual_df(df: pd.DataFrame):
+    st.session_state["manual_portfolio"] = normalize_manual_portfolio(df)[
+        ["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"]
+    ].copy()
+
+
+def render_manual_detail_page(quick_df: pd.DataFrame, selected_symbol: str, section_key: str):
+    """카드 클릭 후 보이는 상세 화면. 수량/평균 매매가/현재가를 여기서만 수정합니다."""
+    selected_symbol = normalize_symbol(selected_symbol)
+    match = quick_df[quick_df["symbol"].astype(str).map(normalize_symbol) == selected_symbol]
+
+    if match.empty:
+        st.session_state["selected_manual_symbol"] = None
+        clear_query_params_safe()
+        st.warning("선택한 종목을 찾을 수 없습니다.")
+        st.rerun()
+
+    i = match.index[0]
+    row = quick_df.loc[i]
+
+    symbol = str(row["symbol"])
+    name = str(row["name"])
+    currency = str(row["currency"])
+    market = str(row.get("market_label", market_label(symbol=symbol, currency=currency)))
+    qty = safe_float(row.get("quantity"), 0)
+    avg_price = safe_float(row.get("avg_price"), 0)
+    current_price = safe_float(row.get("current_price"), 0)
+    buy_amount = qty * avg_price
+    eval_amount = qty * current_price
+    profit = eval_amount - buy_amount
+    profit_rate = (profit / buy_amount * 100) if buy_amount else 0
+    step_price = price_step_by_currency(currency)
+
+    back_col, title_col = st.columns([0.55, 3.45], gap="small")
+    with back_col:
+        if st.button("‹", key=f"{section_key}_manual_back_{symbol}", use_container_width=True):
+            st.session_state["selected_manual_symbol"] = None
+            clear_query_params_safe()
+            st.rerun()
+    with title_col:
+        st.markdown(f"### {name}")
+        st.caption(f"{market} · {symbol}")
+
+    st.markdown(
+        f"""
+<div class="detail-card">
+  <div class="detail-title">{name}</div>
+  <div class="detail-sub">{qty:g}주 · {symbol}</div>
+  <div class="detail-grid">
+    <div>
+      <div class="detail-label">평가금액</div>
+      <div class="detail-value">{format_money_by_currency(eval_amount, currency)}</div>
+    </div>
+    <div>
+      <div class="detail-label">평가손익</div>
+      <div class="detail-value {signed_class(profit)}">{format_money_by_currency(profit, currency)} ({profit_rate:+.1f}%)</div>
+    </div>
+    <div>
+      <div class="detail-label">평균 매매가</div>
+      <div class="detail-value">{format_money_by_currency(avg_price, currency)}</div>
+    </div>
+    <div>
+      <div class="detail-label">현재가</div>
+      <div class="detail-value">{format_money_by_currency(current_price, currency)}</div>
+    </div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    st.caption("수량은 +/-로 조정하고, 평균 매매가와 현재가는 아래 입력칸에서 수정합니다.")
+
+    minus_col, qty_col, plus_col = st.columns([0.8, 2.4, 0.8], gap="small")
+    with minus_col:
+        if st.button("－", key=f"{section_key}_detail_qty_minus_{symbol}", use_container_width=True):
+            quick_df.loc[i, "quantity"] = max(0, qty - 1)
+            sync_manual_df(quick_df)
+            st.rerun()
+    with qty_col:
+        st.markdown(
+            f"""
+<div style="text-align:center;font-weight:900;padding-top:0.45rem;">
+  보유 수량 {qty:g}주
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+    with plus_col:
+        if st.button("＋", key=f"{section_key}_detail_qty_plus_{symbol}", use_container_width=True):
+            quick_df.loc[i, "quantity"] = qty + 1
+            sync_manual_df(quick_df)
+            st.rerun()
+
+    p1, p2 = st.columns(2, gap="small")
+    new_avg = p1.number_input(
+        "평균 매매가",
+        min_value=0.0,
+        value=float(avg_price),
+        step=float(step_price),
+        key=f"{section_key}_detail_avg_price_{symbol}",
+    )
+    new_current = p2.number_input(
+        "현재가",
+        min_value=0.0,
+        value=float(current_price),
+        step=float(step_price),
+        key=f"{section_key}_detail_current_price_{symbol}",
+    )
+
+    if new_avg != avg_price or new_current != current_price:
+        quick_df.loc[i, "avg_price"] = new_avg
+        quick_df.loc[i, "current_price"] = new_current
+        sync_manual_df(quick_df)
+        st.rerun()
+
+
 def render_manual_portfolio_controls(section_key: str = "total"):
     """
     수기 포트폴리오 관리 UI.
-    종목 클릭 상세 화면 기능은 제거하고 목록에서 바로 수량/단가를 수정합니다.
+    목록은 보유 종목 카드 형태로 표시하고, 카드를 누르면 상세 화면에서 수량/단가를 수정합니다.
     """
     st.subheader("수기 포트폴리오")
-    st.caption("수량은 +/-로 조정하고 단가는 접어서 수정합니다.")
-
-    # 이전 버전에서 남아 있던 상세 화면 상태/URL 파라미터 제거
-    st.session_state["selected_manual_symbol"] = None
-    if get_query_param_value("manual_symbol"):
-        clear_query_params_safe()
 
     try:
         quick_df = normalize_manual_portfolio(st.session_state.get("manual_portfolio", pd.DataFrame()))[
@@ -2234,112 +2350,36 @@ def render_manual_portfolio_controls(section_key: str = "total"):
     except Exception:
         quick_df = pd.DataFrame(columns=["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"])
 
-    if quick_df.empty:
-        st.info("수기 포트폴리오에 등록된 종목이 없습니다. 종목을 검색해서 추가하세요.")
+    selected_symbol = get_query_param_value("manual_symbol") or st.session_state.get("selected_manual_symbol")
+    if selected_symbol:
+        st.session_state["selected_manual_symbol"] = normalize_symbol(selected_symbol)
+        render_manual_detail_page(quick_df, selected_symbol, section_key)
     else:
-        for i, row in quick_df.iterrows():
-            symbol = row["symbol"]
-            currency = row["currency"]
-            qty = safe_float(row["quantity"], 0)
-            avg_price = safe_float(row["avg_price"], 0)
-            current_price = safe_float(row["current_price"], 0)
+        st.caption("카드를 누르면 상세페이지에서 수량, 평균 매매가, 현재가를 조정할 수 있습니다.")
 
-            buy_amount = qty * avg_price
-            eval_amount = qty * current_price
-            profit = eval_amount - buy_amount
-            profit_rate = (profit / buy_amount * 100) if buy_amount else 0
+        if quick_df.empty:
+            st.info("수기 포트폴리오에 등록된 종목이 없습니다. 종목을 검색해서 추가하세요.")
+        else:
+            for i, row in quick_df.iterrows():
+                symbol = str(row["symbol"])
+                currency = str(row["currency"])
+                qty = safe_float(row["quantity"], 0)
+                avg_price = safe_float(row["avg_price"], 0)
+                current_price = safe_float(row["current_price"], 0)
 
-            if is_mobile_mode():
-                minus_col, name_col, value_col, plus_col = st.columns([0.42, 1.7, 1.25, 0.42], gap="small")
-                with minus_col:
-                    if st.button("－", key=f"{section_key}_qty_minus_{symbol}_{i}", use_container_width=True):
-                        quick_df.loc[i, "quantity"] = max(0, qty - 1)
-                        st.session_state["manual_portfolio"] = quick_df.copy()
-                        st.rerun()
-                with name_col:
-                    st.markdown(
-                        f"""
-<div class="portfolio-name">{row['name']}</div>
-<div class="portfolio-sub">{qty:g}주 · {symbol}</div>
-""",
-                        unsafe_allow_html=True,
-                    )
-                with value_col:
-                    st.markdown(
-                        f"""
-<div class="portfolio-value">{format_money_by_currency(eval_amount, currency)}</div>
-<div class="portfolio-pnl {signed_class(profit)}">{format_money_by_currency(profit, currency)} ({profit_rate:+.1f}%)</div>
-""",
-                        unsafe_allow_html=True,
-                    )
-                with plus_col:
-                    if st.button("＋", key=f"{section_key}_qty_plus_{symbol}_{i}", use_container_width=True):
-                        quick_df.loc[i, "quantity"] = qty + 1
-                        st.session_state["manual_portfolio"] = quick_df.copy()
-                        st.rerun()
+                buy_amount = qty * avg_price
+                eval_amount = qty * current_price
+                profit = eval_amount - buy_amount
+                profit_rate = (profit / buy_amount * 100) if buy_amount else 0
 
-                with st.expander(f"{row['name']} 단가 수정", expanded=False):
-                    p1, p2 = st.columns(2)
-                    new_avg = p1.number_input(
-                        "평균 매입가",
-                        min_value=0.0,
-                        value=float(avg_price),
-                        step=1.0,
-                        key=f"{section_key}_avg_price_inline_{symbol}_{i}",
-                    )
-                    new_current = p2.number_input(
-                        "현재가",
-                        min_value=0.0,
-                        value=float(current_price),
-                        step=1.0,
-                        key=f"{section_key}_current_price_inline_{symbol}_{i}",
-                    )
-
-                    if new_avg != avg_price or new_current != current_price:
-                        quick_df.loc[i, "avg_price"] = new_avg
-                        quick_df.loc[i, "current_price"] = new_current
-                        st.session_state["manual_portfolio"] = quick_df.copy()
-                        st.rerun()
-
-                st.markdown('<div class="mobile-search-divider"></div>', unsafe_allow_html=True)
-            else:
-                c1, c2, c3, c4, c5 = st.columns([1.6, 0.55, 0.75, 0.55, 1.4], gap="small")
-                c1.markdown(f"**{row['name']}**  \n<span style='color:#8b8f98;font-size:0.82rem'>{symbol} · {qty:g}주</span>", unsafe_allow_html=True)
-                if c2.button("－", key=f"{section_key}_desk_qty_minus_{symbol}_{i}", use_container_width=True):
-                    quick_df.loc[i, "quantity"] = max(0, qty - 1)
-                    st.session_state["manual_portfolio"] = quick_df.copy()
-                    st.rerun()
-                c3.markdown(f"**{qty:g}주**")
-                if c4.button("＋", key=f"{section_key}_desk_qty_plus_{symbol}_{i}", use_container_width=True):
-                    quick_df.loc[i, "quantity"] = qty + 1
-                    st.session_state["manual_portfolio"] = quick_df.copy()
-                    st.rerun()
-                c5.markdown(
-                    f"**{format_money_by_currency(eval_amount, currency)}**  \n<span class='{signed_class(profit)}'>{format_money_by_currency(profit, currency)} ({profit_rate:+.1f}%)</span>",
-                    unsafe_allow_html=True,
+                portfolio_card_link(
+                    href=f"?manual_symbol={symbol}",
+                    name=str(row["name"]),
+                    value_text=format_money_by_currency(eval_amount, currency),
+                    qty_text=f"{qty:g}주",
+                    profit_text=f"{format_money_by_currency(profit, currency)} ({profit_rate:+.1f}%)",
+                    profit_value=profit,
                 )
-
-                with st.expander(f"{row['name']} 단가 수정", expanded=False):
-                    p1, p2 = st.columns(2)
-                    new_avg = p1.number_input(
-                        "평균 매입가",
-                        min_value=0.0,
-                        value=float(avg_price),
-                        step=1.0,
-                        key=f"{section_key}_desk_avg_price_inline_{symbol}_{i}",
-                    )
-                    new_current = p2.number_input(
-                        "현재가",
-                        min_value=0.0,
-                        value=float(current_price),
-                        step=1.0,
-                        key=f"{section_key}_desk_current_price_inline_{symbol}_{i}",
-                    )
-                    if new_avg != avg_price or new_current != current_price:
-                        quick_df.loc[i, "avg_price"] = new_avg
-                        quick_df.loc[i, "current_price"] = new_current
-                        st.session_state["manual_portfolio"] = quick_df.copy()
-                        st.rerun()
 
     col_refresh, col_save, col_reset = st.columns([1.4, 0.9, 1.6])
     with col_refresh:
@@ -2354,7 +2394,7 @@ def render_manual_portfolio_controls(section_key: str = "total"):
     with col_save:
         if st.button("수기 저장", key=f"{section_key}_save_manual", use_container_width=True):
             try:
-                st.session_state["manual_portfolio"] = normalize_manual_portfolio(st.session_state["manual_portfolio"]).copy()
+                sync_manual_df(st.session_state["manual_portfolio"])
             except Exception:
                 pass
             st.success("수기 포트폴리오 저장 완료")
@@ -3139,6 +3179,12 @@ st.subheader("수기 포트폴리오 입력")
 st.caption("종목 검색으로 추가한 뒤 아래 수량 +/- 표에서 수량을 조정합니다. 현재가/환율은 버튼으로 실제값 갱신할 수 있습니다.")
 
 with st.expander("종목명/종목코드 검색해서 추가", expanded=True):
+    # [추가] 버튼을 누른 뒤에는 검색창을 빈 값으로 초기화합니다.
+    # 위젯 생성 이후 session_state 값을 직접 바꾸면 Streamlit 오류가 날 수 있어
+    # 버튼 클릭 시 플래그만 세우고, 다음 rerun에서 위젯 생성 전에 초기화합니다.
+    if st.session_state.pop("clear_stock_search_keyword_live", False):
+        st.session_state["stock_search_keyword_live"] = ""
+
     stock_keyword = live_search_input(
         "검색어",
         placeholder="예: 삼, 삼성, S, SK, SK스, AAPL",
@@ -3185,6 +3231,7 @@ with st.expander("종목명/종목코드 검색해서 추가", expanded=True):
                 with c2:
                     if st.button("추가", key=f"add_stock_mobile_{symbol}_{i}", use_container_width=True):
                         add_manual_stock_row(row)
+                        st.session_state["clear_stock_search_keyword_live"] = True
                         st.success(f"{name} 추가 완료")
                         st.rerun()
                 st.markdown('<div style="border-bottom:1px solid rgba(140,140,160,0.22); margin:0.08rem 0;"></div>', unsafe_allow_html=True)
@@ -3210,12 +3257,14 @@ with st.expander("종목명/종목코드 검색해서 추가", expanded=True):
 
                 if row_cols[4].button("추가", key=f"add_stock_{symbol}_{i}", use_container_width=True):
                     add_manual_stock_row(row)
+                    st.session_state["clear_stock_search_keyword_live"] = True
                     st.success(f"{name} ({symbol}) 추가 완료")
                     st.rerun()
 
         st.caption("추가 시 API 키가 있으면 실제 현재가가 현재가/매입가 기본값으로 들어갑니다. API 키가 없거나 조회 실패 시 0으로 들어가며 직접 수정할 수 있습니다.")
 
-# 상단의 큰 편집 표는 제거하고, 아래 수량 +/- 표 하나만 사용합니다.
+# 수기 포트폴리오는 종합 탭 안에서만 표시/수정합니다.
+# 여기서는 데이터 정규화와 데모/수기 화면의 계산값 동기화만 수행합니다.
 normalized_manual_editor = normalize_manual_portfolio(st.session_state["manual_portfolio"])[
     ["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"]
 ]
@@ -3227,155 +3276,6 @@ if st.session_state.get("last_demo_mode", True):
     if not manual_holdings_live.empty:
         st.session_state["last_holdings"] = manual_holdings_live
 
-st.markdown("#### 수기 포트폴리오")
-st.caption("수량은 +/-로 조정하고 단가는 접어서 수정합니다.")
-
-quick_df = normalize_manual_portfolio(st.session_state["manual_portfolio"])[
-    ["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"]
-].reset_index(drop=True)
-
-if quick_df.empty:
-    st.info("수량 조정할 수기 종목이 없습니다.")
-else:
-    if is_mobile_mode():
-        # 상세 화면 이동 기능 제거: 목록에서 바로 수량 조정, 단가는 expander에서 수정
-        st.session_state["selected_manual_symbol"] = None
-
-        for i, row in quick_df.iterrows():
-            symbol = row["symbol"]
-            currency = row["currency"]
-            qty = safe_float(row["quantity"], 0)
-            avg_price = safe_float(row["avg_price"], 0)
-            current_price = safe_float(row["current_price"], 0)
-
-            buy_amount = qty * avg_price
-            eval_amount = qty * current_price
-            profit = eval_amount - buy_amount
-            profit_rate = (profit / buy_amount * 100) if buy_amount else 0
-
-            minus_col, name_col, value_col, plus_col = st.columns([0.42, 1.7, 1.25, 0.42], gap="small")
-
-            with minus_col:
-                if st.button("－", key=f"mobile_qty_minus_{symbol}_{i}", use_container_width=True):
-                    quick_df.loc[i, "quantity"] = max(0, qty - 1)
-                    st.session_state["manual_portfolio"] = quick_df.copy()
-                    st.rerun()
-
-            with name_col:
-                st.markdown(
-                    f"""
-<div class="portfolio-name">{row['name']}</div>
-<div class="portfolio-sub">{qty:g}주</div>
-""",
-                    unsafe_allow_html=True,
-                )
-
-            with value_col:
-                st.markdown(
-                    f"""
-<div style="padding-top:0.25rem;">
-  <div class="portfolio-value">{format_money_by_currency(eval_amount, currency)}</div>
-  <div class="portfolio-pnl {signed_class(profit)}">{format_money_by_currency(profit, currency)} ({profit_rate:+.1f}%)</div>
-</div>
-""",
-                    unsafe_allow_html=True,
-                )
-
-            with plus_col:
-                if st.button("＋", key=f"mobile_qty_plus_{symbol}_{i}", use_container_width=True):
-                    quick_df.loc[i, "quantity"] = qty + 1
-                    st.session_state["manual_portfolio"] = quick_df.copy()
-                    st.rerun()
-
-            with st.expander(f"{row['name']} 단가 수정", expanded=False):
-                p1, p2 = st.columns(2)
-                new_avg = p1.number_input(
-                    "평균 매입가",
-                    min_value=0.0,
-                    value=float(avg_price),
-                    step=1.0,
-                    key=f"mobile_avg_price_inline_{symbol}_{i}",
-                )
-                new_current = p2.number_input(
-                    "현재가",
-                    min_value=0.0,
-                    value=float(current_price),
-                    step=1.0,
-                    key=f"mobile_current_price_inline_{symbol}_{i}",
-                )
-
-                if new_avg != avg_price or new_current != current_price:
-                    quick_df.loc[i, "avg_price"] = new_avg
-                    quick_df.loc[i, "current_price"] = new_current
-                    st.session_state["manual_portfolio"] = quick_df.copy()
-                    st.rerun()
-
-            st.markdown('<div class="mobile-search-divider"></div>', unsafe_allow_html=True)
-
-    else:
-        header = st.columns([1.0, 1.8, 0.45, 0.7, 0.45, 1.1, 1.1, 1.1, 1.1])
-        header[0].markdown("**종목코드**")
-        header[1].markdown("**종목명**")
-        header[2].markdown("")
-        header[3].markdown("**수량**")
-        header[4].markdown("")
-        header[5].markdown("**평균 매입가**")
-        header[6].markdown("**현재가**")
-        header[7].markdown("**총 매입금액**")
-        header[8].markdown("**총 평가금액**")
-
-        for i, row in quick_df.iterrows():
-            symbol = row["symbol"]
-            currency = row["currency"]
-            qty = safe_float(row["quantity"], 0)
-            avg_price = safe_float(row["avg_price"], 0)
-            current_price = safe_float(row["current_price"], 0)
-            buy_amount = qty * avg_price
-            eval_amount = qty * current_price
-
-            cols = st.columns([1.0, 1.8, 0.45, 0.7, 0.45, 1.1, 1.1, 1.1, 1.1])
-            cols[0].write(symbol)
-            cols[1].write(row["name"])
-
-            if cols[2].button("－", key=f"qty_minus_{symbol}_{i}", use_container_width=True):
-                quick_df.loc[i, "quantity"] = max(0, qty - 1)
-                st.session_state["manual_portfolio"] = quick_df.copy()
-                st.rerun()
-
-            cols[3].write(f"**{qty:g}**")
-
-            if cols[4].button("＋", key=f"qty_plus_{symbol}_{i}", use_container_width=True):
-                quick_df.loc[i, "quantity"] = qty + 1
-                st.session_state["manual_portfolio"] = quick_df.copy()
-                st.rerun()
-
-            new_avg = cols[5].number_input(
-                "평균 매입가",
-                min_value=0.0,
-                value=float(avg_price),
-                step=1.0,
-                key=f"avg_price_inline_{symbol}_{i}",
-                label_visibility="collapsed",
-            )
-            new_current = cols[6].number_input(
-                "현재가",
-                min_value=0.0,
-                value=float(current_price),
-                step=1.0,
-                key=f"current_price_inline_{symbol}_{i}",
-                label_visibility="collapsed",
-            )
-
-            if new_avg != avg_price or new_current != current_price:
-                quick_df.loc[i, "avg_price"] = new_avg
-                quick_df.loc[i, "current_price"] = new_current
-                st.session_state["manual_portfolio"] = quick_df.copy()
-                st.rerun()
-
-            buy_amount = qty * new_avg
-            eval_amount = qty * new_current
-            cols[7].write(format_money_by_currency(buy_amount, currency))
-            cols[8].write(format_money_by_currency(eval_amount, currency))
 # =========================
 # 메인 화면
 # =========================
