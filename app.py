@@ -6,6 +6,8 @@ import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
+import os
+import re
 
 try:
     from st_keyup import st_keyup
@@ -140,11 +142,7 @@ h3 {
     h1 {
         font-size: 1.35rem !important;
     }
-    [data-testid="column"] {
-        width: 100% !important;
-        flex: 1 1 100% !important;
-        min-width: 100% !important;
-    }
+    /* column 강제 세로 배치는 검색 결과 한 줄 표시를 깨서 제거 */
     div[data-testid="stHorizontalBlock"] {
         gap: 0.45rem;
     }
@@ -296,19 +294,9 @@ st.markdown(
     """
 <style>
 @media (max-width: 760px) {
-    /* 모바일에서도 st.columns를 가로로 유지 */
+    /* 검색 결과 행을 최대한 촘촘하게 */
     div[data-testid="stHorizontalBlock"] {
-        display: flex !important;
-        flex-direction: row !important;
-        flex-wrap: nowrap !important;
-        align-items: center !important;
         gap: 0.25rem !important;
-    }
-
-    div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
-        width: auto !important;
-        min-width: 0 !important;
-        flex: 1 1 0 !important;
     }
 
     /* 검색 결과 행은 최대한 낮게 */
@@ -342,38 +330,459 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+st.markdown(
+    """
+<style>
+@media (max-width: 760px) {
+    .manual-list-row {
+        display: grid;
+        grid-template-columns: 34px 1fr auto 34px;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.48rem 0.1rem;
+        border-bottom: 1px solid rgba(49, 51, 63, 0.12);
+    }
+    .manual-list-name {
+        font-weight: 800;
+        font-size: 0.95rem;
+        line-height: 1.15;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .manual-list-sub {
+        color: #8b8f98;
+        font-size: 0.72rem;
+        margin-top: 0.12rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .manual-list-right {
+        text-align: right;
+        min-width: 104px;
+    }
+    .manual-list-amount {
+        font-weight: 800;
+        font-size: 0.9rem;
+        line-height: 1.15;
+        white-space: nowrap;
+    }
+    .manual-list-pnl {
+        font-size: 0.72rem;
+        margin-top: 0.12rem;
+        white-space: nowrap;
+    }
+    .manual-list-btn .stButton > button {
+        min-height: 30px !important;
+        height: 30px !important;
+        width: 30px !important;
+        padding: 0 !important;
+        border-radius: 50% !important;
+        font-size: 0.95rem !important;
+        font-weight: 800 !important;
+    }
+    .manual-price-edit {
+        margin-left: 2.4rem;
+        margin-right: 2.4rem;
+        padding-bottom: 0.35rem;
+    }
+    .manual-price-edit .stNumberInput input {
+        height: 30px !important;
+        min-height: 30px !important;
+        font-size: 0.82rem !important;
+    }
+    .manual-price-edit .stNumberInput label {
+        font-size: 0.72rem !important;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+st.markdown(
+    """
+<style>
+@media (max-width: 760px) {
+    /* 수기 포트폴리오 목록의 종목명 버튼을 리스트 텍스트처럼 보이게 */
+    button[kind="secondary"] {
+        text-align: left !important;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+st.markdown(
+    """
+<style>
+@media (max-width: 760px) {
+    .block-container {
+        padding-left: 0.65rem !important;
+        padding-right: 0.65rem !important;
+        padding-top: 0.45rem !important;
+        max-width: 100% !important;
+    }
+
+    h1 {
+        font-size: 1.35rem !important;
+        margin-bottom: 0.35rem !important;
+    }
+
+    h2, h3 {
+        font-size: 1.08rem !important;
+        margin-top: 0.55rem !important;
+        margin-bottom: 0.35rem !important;
+    }
+
+    .stButton > button {
+        min-height: 34px !important;
+        border-radius: 12px !important;
+        font-size: 0.9rem !important;
+        font-weight: 700 !important;
+    }
+
+    /* 종목 검색 결과 한 줄 */
+    .search-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) 64px;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.42rem 0.1rem;
+        border-bottom: 1px solid rgba(140, 140, 160, 0.22);
+    }
+    .search-name {
+        font-size: 0.92rem;
+        font-weight: 800;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+    .search-price {
+        font-size: 0.78rem;
+        color: #8b8f98;
+        text-align: right;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    /* 수기 포트폴리오 목록 */
+    .portfolio-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+        align-items: center;
+        padding: 0.55rem 0.05rem;
+        border-bottom: 1px solid rgba(140, 140, 160, 0.22);
+    }
+    .portfolio-name {
+        font-size: 0.96rem;
+        font-weight: 850;
+        line-height: 1.2;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+    .portfolio-sub {
+        font-size: 0.73rem;
+        color: #8b8f98;
+        margin-top: 0.12rem;
+    }
+    .portfolio-value {
+        text-align: right;
+        font-size: 0.93rem;
+        font-weight: 850;
+        line-height: 1.2;
+    }
+    .portfolio-pnl {
+        text-align: right;
+        font-size: 0.73rem;
+        margin-top: 0.12rem;
+    }
+
+    .detail-card {
+        border: 1px solid rgba(140, 140, 160, 0.22);
+        border-radius: 16px;
+        padding: 0.8rem;
+        margin: 0.45rem 0;
+        background: rgba(250, 250, 250, 0.06);
+    }
+    .detail-title {
+        font-size: 1.05rem;
+        font-weight: 900;
+    }
+    .detail-sub {
+        font-size: 0.76rem;
+        color: #8b8f98;
+        margin-top: 0.1rem;
+    }
+    .detail-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem 0.7rem;
+        margin-top: 0.65rem;
+    }
+    .detail-label {
+        font-size: 0.72rem;
+        color: #8b8f98;
+    }
+    .detail-value {
+        font-size: 0.95rem;
+        font-weight: 850;
+    }
+    .positive-red {
+        color: #ff4d4f !important;
+        font-weight: 850;
+    }
+    .negative-blue {
+        color: #4dabf7 !important;
+        font-weight: 850;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+st.markdown(
+    """
+<style>
+/* 투자자별 순매수 거래일 number_input UI */
+div[data-testid="stNumberInput"] {
+    max-width: 100%;
+}
+
+@media (max-width: 760px) {
+    div[data-testid="stNumberInput"] input {
+        height: 38px !important;
+        min-height: 38px !important;
+        border-radius: 12px !important;
+        font-size: 0.95rem !important;
+        font-weight: 800 !important;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+st.markdown(
+    """
+<style>
+.investor-inline-title {
+    font-size: 1.18rem;
+    font-weight: 850;
+    line-height: 38px;
+    white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+    .investor-inline-title {
+        font-size: 0.94rem !important;
+        line-height: 38px !important;
+        white-space: nowrap;
+    }
+
+    /* 해당 number input이 제목 안에 들어간 것처럼 보이도록 compact */
+    div[data-testid="stNumberInput"] input {
+        height: 38px !important;
+        min-height: 38px !important;
+        border-radius: 12px !important;
+        font-size: 0.95rem !important;
+        font-weight: 800 !important;
+        text-align: center !important;
+        padding-left: 0.35rem !important;
+        padding-right: 0.35rem !important;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+st.markdown(
+    """
+<style>
+.portfolio-row-button button {
+    min-height: 64px !important;
+    height: auto !important;
+    padding: 0.55rem 0.8rem !important;
+    text-align: left !important;
+    border-radius: 14px !important;
+    white-space: normal !important;
+}
+
+.portfolio-row-html {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 0.7rem;
+    width: 100%;
+}
+
+.portfolio-row-left-title {
+    font-size: 1rem;
+    font-weight: 900;
+    line-height: 1.2;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.portfolio-row-left-sub {
+    font-size: 0.78rem;
+    color: #8b8f98;
+    margin-top: 0.15rem;
+}
+
+.portfolio-row-right {
+    text-align: right;
+}
+
+.portfolio-row-right-main {
+    font-size: 0.98rem;
+    font-weight: 900;
+    line-height: 1.2;
+}
+
+.portfolio-row-right-sub {
+    font-size: 0.78rem;
+    margin-top: 0.15rem;
+}
+
+@media (max-width: 760px) {
+    .portfolio-row-button button {
+        min-height: 58px !important;
+        padding: 0.48rem 0.65rem !important;
+    }
+    .portfolio-row-left-title {
+        font-size: 0.94rem !important;
+    }
+    .portfolio-row-left-sub,
+    .portfolio-row-right-sub {
+        font-size: 0.72rem !important;
+    }
+    .portfolio-row-right-main {
+        font-size: 0.9rem !important;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+st.markdown(
+    """
+<style>
+.portfolio-card-link {
+    display: block;
+    text-decoration: none !important;
+    color: inherit !important;
+    border: 1px solid rgba(140, 140, 160, 0.32);
+    border-radius: 16px;
+    padding: 0.72rem 0.9rem;
+    margin: 0.45rem 0;
+    background: rgba(255, 255, 255, 0.035);
+    transition: all 0.12s ease-in-out;
+}
+
+.portfolio-card-link:hover {
+    border-color: rgba(255, 75, 75, 0.75);
+    background: rgba(255, 75, 75, 0.055);
+}
+
+.portfolio-card-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    gap: 0.6rem;
+    align-items: center;
+}
+
+.portfolio-card-name {
+    font-size: 1.02rem;
+    font-weight: 900;
+    line-height: 1.2;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.portfolio-card-qty {
+    margin-top: 0.32rem;
+    font-size: 0.82rem;
+    color: #a0a4ad;
+    font-weight: 700;
+}
+
+.portfolio-card-value {
+    text-align: right;
+    font-size: 1rem;
+    font-weight: 900;
+    line-height: 1.2;
+}
+
+.portfolio-card-profit {
+    text-align: right;
+    margin-top: 0.32rem;
+    font-size: 0.82rem;
+    font-weight: 850;
+}
+
+@media (max-width: 760px) {
+    .portfolio-card-link {
+        padding: 0.62rem 0.7rem;
+        margin: 0.36rem 0;
+        border-radius: 14px;
+    }
+    .portfolio-card-name {
+        font-size: 0.95rem;
+    }
+    .portfolio-card-qty,
+    .portfolio-card-profit {
+        font-size: 0.74rem;
+    }
+    .portfolio-card-value {
+        font-size: 0.92rem;
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 def signed_class(value: float) -> str:
     try:
         value = float(value)
     except Exception:
-        return "mobile-value"
+        return "detail-value"
     if value > 0:
-        return "mobile-positive"
+        return "positive-red"
     if value < 0:
-        return "mobile-negative"
-    return "mobile-value"
+        return "negative-blue"
+    return "detail-value"
 
-
-# 일부 session_state 값은 아래 초기화 블록보다 먼저 참조될 수 있어
-# 앱 시작 직후 안전하게 기본값을 보장합니다.
-st.session_state.setdefault("investor_days", 3)
-st.session_state.setdefault("last_refresh_time", "")
-
-
-# =========================
-# 공통 유틸
-# =========================
-
-def get_secret(key: str, default: Any = None) -> Any:
+def get_secret(key: str, default: str = "") -> str:
+    """
+    Streamlit secrets 우선, 없으면 환경변수 사용.
+    secrets.toml이 없거나 key가 없어도 앱이 죽지 않게 처리합니다.
+    """
     try:
-        if key in st.secrets:
-            return st.secrets[key]
+        value = st.secrets.get(key, None)
+        if value is not None:
+            return str(value)
     except Exception:
         pass
 
-    import os
     return os.getenv(key, default)
-
 
 def safe_float(x: Any, default: Optional[float] = 0.0) -> Optional[float]:
     try:
@@ -386,6 +795,17 @@ def safe_float(x: Any, default: Optional[float] = 0.0) -> Optional[float]:
 
 def normalize_symbol(symbol: str) -> str:
     return str(symbol).strip().upper()
+
+
+
+
+def is_kr_symbol(symbol: str) -> bool:
+    """
+    국장 종목코드 여부 판단.
+    예: 005930, 000660, 402340
+    """
+    symbol = normalize_symbol(symbol)
+    return bool(re.fullmatch(r"\d{6}", symbol))
 
 
 def parse_json_path(obj: Any, path: str, default: Any = None) -> Any:
@@ -505,8 +925,8 @@ def demo_holdings() -> pd.DataFrame:
 def initial_manual_portfolio() -> pd.DataFrame:
     return pd.DataFrame(
         [
-            {"symbol": "005930", "name": "삼성전자", "market_label": "국장", "currency": "KRW", "quantity": 1, "avg_price": 80000.0, "current_price": 83000.0},
-            {"symbol": "AAPL", "name": "Apple Inc.", "market_label": "미장", "currency": "USD", "quantity": 1, "avg_price": 190.0, "current_price": 212.3},
+            {"symbol": "005930", "name": "삼성전자", "market_label": "국장", "currency": "KRW", "quantity": 0, "avg_price": 80000.0, "current_price": 83000.0},
+            {"symbol": "AAPL", "name": "Apple Inc.", "market_label": "미장", "currency": "USD", "quantity": 0, "avg_price": 190.0, "current_price": 212.3},
         ]
     )
 
@@ -1457,60 +1877,122 @@ def get_kr_latest_close_prices(symbols: List[str]) -> Dict[str, Optional[float]]
     return result
 
 
+
+def get_us_latest_prices(symbols: List[str]) -> Dict[str, Optional[float]]:
+    """
+    Toss API 현재가 조회가 안 될 때, 미장 종목/ETF는 yfinance로 최근 가격을 보완합니다.
+    완전한 실시간 시세는 아니며 거래소 정책상 지연 시세일 수 있습니다.
+    """
+    result = {normalize_symbol(s): None for s in symbols}
+    us_symbols = [normalize_symbol(s) for s in symbols if not is_kr_symbol(normalize_symbol(s))]
+
+    if not us_symbols:
+        return result
+
+    try:
+        import yfinance as yf
+    except Exception:
+        return result
+
+    for symbol in us_symbols:
+        try:
+            ticker = yf.Ticker(symbol)
+            price = None
+
+            try:
+                fast_info = ticker.fast_info
+                price = fast_info.get("last_price", None)
+            except Exception:
+                price = None
+
+            if price is None or safe_float(price, None) is None:
+                try:
+                    hist = ticker.history(period="1d", interval="1m")
+                    if hist is not None and not hist.empty and "Close" in hist.columns:
+                        price = hist["Close"].dropna().iloc[-1]
+                except Exception:
+                    price = None
+
+            if price is None or safe_float(price, None) is None:
+                try:
+                    hist = ticker.history(period="5d", interval="1d")
+                    if hist is not None and not hist.empty and "Close" in hist.columns:
+                        price = hist["Close"].dropna().iloc[-1]
+                except Exception:
+                    price = None
+
+            price = safe_float(price, None)
+            if price is not None and price > 0:
+                result[symbol] = float(price)
+
+        except Exception:
+            continue
+
+    return result
+
+
 def batch_get_default_prices(symbols: List[str]) -> Dict[str, Optional[float]]:
     """
     검색 결과/수기 추가 시 사용할 기본 현재가 조회.
-    1순위: 토스 OpenAPI prices
-    2순위: 국장 종목 pykrx 최근 종가 fallback
+
+    1순위: Toss OpenAPI /api/v1/prices
+    2순위: 국장 pykrx 최근 종가
+    3순위: 미장 yfinance 최근 가격
+
+    Toss API 키가 있으면 Toss 가격이 우선입니다.
+    키가 없거나 조회 실패해도 앱이 죽지 않고 fallback 또는 '-'로 표시합니다.
     """
     symbols = [normalize_symbol(s) for s in symbols]
     result: Dict[str, Optional[float]] = {s: None for s in symbols}
 
-    client = get_effective_client()
-    if client is not None and symbols:
-        try:
+    try:
+        client = get_effective_client()
+        if client is not None and symbols:
             price_map = client.get_prices(symbols)
             for symbol in symbols:
                 price = safe_float(price_map.get(symbol), None)
                 if price is not None and price > 0:
                     result[symbol] = float(price)
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # 토스 API 조회 실패 또는 API 키 없음: 국장만 pykrx 최근 종가로 보완
-    missing_kr = [s for s, v in result.items() if v is None and is_kr_symbol(s)]
-    if missing_kr:
-        fallback = get_kr_latest_close_prices(missing_kr)
-        for symbol, price in fallback.items():
-            if result.get(symbol) is None and price is not None and price > 0:
-                result[symbol] = float(price)
+    try:
+        missing_kr = [s for s, v in result.items() if v is None and is_kr_symbol(s)]
+        if missing_kr:
+            fallback_kr = get_kr_latest_close_prices(missing_kr)
+            for symbol, price in fallback_kr.items():
+                if result.get(symbol) is None and price is not None and price > 0:
+                    result[symbol] = float(price)
+    except Exception:
+        pass
+
+    try:
+        missing_us = [s for s, v in result.items() if v is None and not is_kr_symbol(s)]
+        if missing_us:
+            fallback_us = get_us_latest_prices(missing_us)
+            for symbol, price in fallback_us.items():
+                if result.get(symbol) is None and price is not None and price > 0:
+                    result[symbol] = float(price)
+    except Exception:
+        pass
 
     return result
 
-
 def get_default_price_for_manual_stock(symbol: str):
     """
-    토스 현재가 API에서 실제 현재가를 가져옵니다.
-    숨겨진 API 키 또는 화면 입력 API 키가 없거나 조회 실패하면 None을 반환합니다.
+    수기 종목 추가 시 기본 현재가.
+    Toss API가 있으면 Toss 현재가를 우선 사용하고,
+    실패 시 국장은 pykrx, 미장은 yfinance fallback을 사용합니다.
     """
     symbol = normalize_symbol(symbol)
-    client = get_effective_client()
-
-    if client is None:
-        return None
-
     try:
-        price_map = client.get_prices([symbol])
+        price_map = batch_get_default_prices([symbol])
         price = safe_float(price_map.get(symbol), None)
-
         if price is not None and price > 0:
             return float(price)
-
     except Exception:
-        return None
-
+        pass
     return None
-
 
 def add_manual_stock_row(stock_row: pd.Series):
     symbol = normalize_symbol(stock_row.get("symbol", ""))
@@ -1585,76 +2067,28 @@ def render_exchange_rate(exchange_rate: Dict[str, Any], error_message: Optional[
 def render_holdings_table(df: pd.DataFrame, title: str):
     st.subheader(title)
 
-    if df.empty:
+    if df is None or df.empty:
         st.info("보유 종목이 없습니다.")
         return
 
-    if is_mobile_mode():
-        for _, r in df.iterrows():
-            currency = r.get("currency", "KRW")
-            profit_loss = safe_float(r.get("profit_loss"), 0)
-            profit_rate = safe_float(r.get("profit_rate"), 0)
+    for i, r in df.reset_index(drop=True).iterrows():
+        currency = r.get("currency", "KRW")
+        qty = safe_float(r.get("quantity"), 0)
+        eval_amount = safe_float(r.get("eval_amount"), 0)
+        profit_loss = safe_float(r.get("profit_loss"), 0)
+        profit_rate = safe_float(r.get("profit_rate"), 0)
+        name = str(r.get("name", ""))
+        symbol = str(r.get("symbol", ""))
 
-            st.markdown(
-                f"""
-<div class="mobile-card">
-  <div class="mobile-card-title">{r.get('name', '')}</div>
-  <div class="mobile-card-sub">{r.get('symbol', '')} · {safe_float(r.get('quantity'), 0):g}주 · {currency}</div>
-  <div class="mobile-card-grid">
-    <div><div class="mobile-label">현재가</div><div class="mobile-value">{format_money_by_currency(r.get('current_price'), currency)}</div></div>
-    <div><div class="mobile-label">평가금액</div><div class="mobile-value">{format_money_by_currency(r.get('eval_amount'), currency)}</div></div>
-    <div><div class="mobile-label">평가손익</div><div class="{signed_class(profit_loss)}">{format_money_by_currency(profit_loss, currency)}</div></div>
-    <div><div class="mobile-label">수익률</div><div class="{signed_class(profit_rate)}">{format_rate_percent(profit_rate)}</div></div>
-  </div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
-        return
+        portfolio_card_link(
+            href=f"?holding_symbol={symbol}",
+            name=name,
+            value_text=format_money_by_currency(eval_amount, currency),
+            qty_text=f"{qty:g}주",
+            profit_text=f"{format_money_by_currency(profit_loss, currency)} ({profit_rate:+.1f}%)",
+            profit_value=profit_loss,
+        )
 
-        return
-
-    display = df.copy()
-    display["평균단가"] = display.apply(lambda r: format_money_by_currency(r["avg_price"], r["currency"]), axis=1)
-    display["현재가"] = display.apply(lambda r: format_money_by_currency(r["current_price"], r["currency"]), axis=1)
-    display["매입금액"] = display.apply(lambda r: format_money_by_currency(r["buy_amount"], r["currency"]), axis=1)
-    display["평가금액"] = display.apply(lambda r: format_money_by_currency(r["eval_amount"], r["currency"]), axis=1)
-    display["평가손익"] = display.apply(lambda r: format_money_by_currency(r["profit_loss"], r["currency"]), axis=1)
-    display["수익률"] = display["profit_rate"].map(lambda x: format_rate_percent(x))
-    display["당일손익"] = display.apply(lambda r: format_money_by_currency(r["daily_profit_loss"], r["currency"]), axis=1)
-    display["당일수익률"] = display["daily_profit_rate"].map(lambda x: format_rate_percent(x))
-    display["비중"] = display["weight_in_market"].map(lambda x: format_rate_percent(x))
-
-    st.dataframe(
-        display[
-            [
-                "source",
-                "symbol",
-                "name",
-                "currency",
-                "quantity",
-                "평균단가",
-                "현재가",
-                "매입금액",
-                "평가금액",
-                "평가손익",
-                "수익률",
-                "당일손익",
-                "당일수익률",
-                "비중",
-            ]
-        ].rename(
-            columns={
-                "source": "구분",
-                "symbol": "종목코드",
-                "name": "종목명",
-                "currency": "통화",
-                "quantity": "수량",
-            }
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
 
 
 def render_allocation_charts(df: pd.DataFrame, title_prefix: str):
@@ -1729,42 +2163,309 @@ def render_market_section(holdings: pd.DataFrame, market_name: str):
     render_allocation_charts(market_df, market_name)
 
 
-def render_total_section(holdings: pd.DataFrame, exchange_rate: Dict[str, Any]):
-    st.markdown("### 종합")
 
-    if holdings.empty:
-        st.info("보유 종목이 없습니다.")
+
+
+
+
+
+def get_query_param_value(key: str) -> Optional[str]:
+    try:
+        value = st.query_params.get(key, None)
+        if isinstance(value, list):
+            return value[0] if value else None
+        return value
+    except Exception:
+        return None
+
+
+def clear_query_params_safe():
+    try:
+        st.query_params.clear()
+    except Exception:
+        pass
+
+
+def portfolio_card_link(
+    href: str,
+    name: str,
+    value_text: str,
+    qty_text: str,
+    profit_text: str,
+    profit_value: float = 0.0,
+):
+    profit_cls = signed_class(profit_value)
+    st.markdown(
+        f"""
+<a class="portfolio-card-link" href="{href}">
+  <div class="portfolio-card-grid">
+    <div>
+      <div class="portfolio-card-name">{name}</div>
+      <div class="portfolio-card-qty">{qty_text}</div>
+    </div>
+    <div>
+      <div class="portfolio-card-value">{value_text}</div>
+      <div class="portfolio-card-profit {profit_cls}">{profit_text}</div>
+    </div>
+  </div>
+</a>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_manual_portfolio_controls(section_key: str = "total"):
+    """
+    수기 포트폴리오 관리 UI.
+    종목 클릭 상세 화면 기능은 제거하고 목록에서 바로 수량/단가를 수정합니다.
+    """
+    st.subheader("수기 포트폴리오")
+    st.caption("수량은 +/-로 조정하고 단가는 접어서 수정합니다.")
+
+    # 이전 버전에서 남아 있던 상세 화면 상태/URL 파라미터 제거
+    st.session_state["selected_manual_symbol"] = None
+    if get_query_param_value("manual_symbol"):
+        clear_query_params_safe()
+
+    try:
+        quick_df = normalize_manual_portfolio(st.session_state.get("manual_portfolio", pd.DataFrame()))[
+            ["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"]
+        ].reset_index(drop=True)
+    except Exception:
+        quick_df = pd.DataFrame(columns=["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"])
+
+    if quick_df.empty:
+        st.info("수기 포트폴리오에 등록된 종목이 없습니다. 종목을 검색해서 추가하세요.")
+    else:
+        for i, row in quick_df.iterrows():
+            symbol = row["symbol"]
+            currency = row["currency"]
+            qty = safe_float(row["quantity"], 0)
+            avg_price = safe_float(row["avg_price"], 0)
+            current_price = safe_float(row["current_price"], 0)
+
+            buy_amount = qty * avg_price
+            eval_amount = qty * current_price
+            profit = eval_amount - buy_amount
+            profit_rate = (profit / buy_amount * 100) if buy_amount else 0
+
+            if is_mobile_mode():
+                minus_col, name_col, value_col, plus_col = st.columns([0.42, 1.7, 1.25, 0.42], gap="small")
+                with minus_col:
+                    if st.button("－", key=f"{section_key}_qty_minus_{symbol}_{i}", use_container_width=True):
+                        quick_df.loc[i, "quantity"] = max(0, qty - 1)
+                        st.session_state["manual_portfolio"] = quick_df.copy()
+                        st.rerun()
+                with name_col:
+                    st.markdown(
+                        f"""
+<div class="portfolio-name">{row['name']}</div>
+<div class="portfolio-sub">{qty:g}주 · {symbol}</div>
+""",
+                        unsafe_allow_html=True,
+                    )
+                with value_col:
+                    st.markdown(
+                        f"""
+<div class="portfolio-value">{format_money_by_currency(eval_amount, currency)}</div>
+<div class="portfolio-pnl {signed_class(profit)}">{format_money_by_currency(profit, currency)} ({profit_rate:+.1f}%)</div>
+""",
+                        unsafe_allow_html=True,
+                    )
+                with plus_col:
+                    if st.button("＋", key=f"{section_key}_qty_plus_{symbol}_{i}", use_container_width=True):
+                        quick_df.loc[i, "quantity"] = qty + 1
+                        st.session_state["manual_portfolio"] = quick_df.copy()
+                        st.rerun()
+
+                with st.expander(f"{row['name']} 단가 수정", expanded=False):
+                    p1, p2 = st.columns(2)
+                    new_avg = p1.number_input(
+                        "평균 매입가",
+                        min_value=0.0,
+                        value=float(avg_price),
+                        step=1.0,
+                        key=f"{section_key}_avg_price_inline_{symbol}_{i}",
+                    )
+                    new_current = p2.number_input(
+                        "현재가",
+                        min_value=0.0,
+                        value=float(current_price),
+                        step=1.0,
+                        key=f"{section_key}_current_price_inline_{symbol}_{i}",
+                    )
+
+                    if new_avg != avg_price or new_current != current_price:
+                        quick_df.loc[i, "avg_price"] = new_avg
+                        quick_df.loc[i, "current_price"] = new_current
+                        st.session_state["manual_portfolio"] = quick_df.copy()
+                        st.rerun()
+
+                st.markdown('<div class="mobile-search-divider"></div>', unsafe_allow_html=True)
+            else:
+                c1, c2, c3, c4, c5 = st.columns([1.6, 0.55, 0.75, 0.55, 1.4], gap="small")
+                c1.markdown(f"**{row['name']}**  \n<span style='color:#8b8f98;font-size:0.82rem'>{symbol} · {qty:g}주</span>", unsafe_allow_html=True)
+                if c2.button("－", key=f"{section_key}_desk_qty_minus_{symbol}_{i}", use_container_width=True):
+                    quick_df.loc[i, "quantity"] = max(0, qty - 1)
+                    st.session_state["manual_portfolio"] = quick_df.copy()
+                    st.rerun()
+                c3.markdown(f"**{qty:g}주**")
+                if c4.button("＋", key=f"{section_key}_desk_qty_plus_{symbol}_{i}", use_container_width=True):
+                    quick_df.loc[i, "quantity"] = qty + 1
+                    st.session_state["manual_portfolio"] = quick_df.copy()
+                    st.rerun()
+                c5.markdown(
+                    f"**{format_money_by_currency(eval_amount, currency)}**  \n<span class='{signed_class(profit)}'>{format_money_by_currency(profit, currency)} ({profit_rate:+.1f}%)</span>",
+                    unsafe_allow_html=True,
+                )
+
+                with st.expander(f"{row['name']} 단가 수정", expanded=False):
+                    p1, p2 = st.columns(2)
+                    new_avg = p1.number_input(
+                        "평균 매입가",
+                        min_value=0.0,
+                        value=float(avg_price),
+                        step=1.0,
+                        key=f"{section_key}_desk_avg_price_inline_{symbol}_{i}",
+                    )
+                    new_current = p2.number_input(
+                        "현재가",
+                        min_value=0.0,
+                        value=float(current_price),
+                        step=1.0,
+                        key=f"{section_key}_desk_current_price_inline_{symbol}_{i}",
+                    )
+                    if new_avg != avg_price or new_current != current_price:
+                        quick_df.loc[i, "avg_price"] = new_avg
+                        quick_df.loc[i, "current_price"] = new_current
+                        st.session_state["manual_portfolio"] = quick_df.copy()
+                        st.rerun()
+
+    col_refresh, col_save, col_reset = st.columns([1.4, 0.9, 1.6])
+    with col_refresh:
+        if st.button("현재가/환율 실제값 갱신", key=f"{section_key}_refresh_manual", use_container_width=True):
+            updated_manual, refresh_error = refresh_manual_current_prices()
+            if refresh_error:
+                st.warning(refresh_error)
+            else:
+                st.success("현재가와 원달러 환율 갱신 완료")
+            st.rerun()
+
+    with col_save:
+        if st.button("수기 저장", key=f"{section_key}_save_manual", use_container_width=True):
+            try:
+                st.session_state["manual_portfolio"] = normalize_manual_portfolio(st.session_state["manual_portfolio"]).copy()
+            except Exception:
+                pass
+            st.success("수기 포트폴리오 저장 완료")
+            st.rerun()
+
+    with col_reset:
+        if st.button("수기 포트폴리오 초기화", key=f"{section_key}_reset_manual", use_container_width=True):
+            st.session_state["manual_portfolio"] = initial_manual_portfolio()
+            st.session_state["selected_manual_symbol"] = None
+            clear_query_params_safe()
+            st.success("초기화 완료")
+            st.rerun()
+
+
+def render_manual_portfolio_in_total_tab(exchange_rate):
+    """
+    종합 탭의 기존 '종합 보유 종목' 자리에
+    수기 포트폴리오 목록을 표시합니다.
+    """
+    render_manual_portfolio_controls(section_key="total_tab")
+
+def normalize_exchange_rate_value(exchange_rate, default: float = 1350.0) -> float:
+    """
+    exchange_rate가 float/int 또는 dict 형태로 들어와도 숫자 환율만 뽑아냅니다.
+    예:
+    - 1350.5
+    - {"rate": 1350.5}
+    - {"exchange_rate": 1350.5}
+    - {"result": {"rate": 1350.5}}
+    """
+    if isinstance(exchange_rate, dict):
+        candidate_keys = [
+            "rate",
+            "exchange_rate",
+            "exchangeRate",
+            "basePrice",
+            "price",
+            "value",
+            "usd_krw",
+            "USDKRW",
+        ]
+
+        for key in candidate_keys:
+            value = exchange_rate.get(key)
+            parsed = safe_float(value, None)
+            if parsed is not None and parsed > 0:
+                return float(parsed)
+
+        result = exchange_rate.get("result")
+        if isinstance(result, dict):
+            for key in candidate_keys:
+                value = result.get(key)
+                parsed = safe_float(value, None)
+                if parsed is not None and parsed > 0:
+                    return float(parsed)
+
+    parsed = safe_float(exchange_rate, None)
+    if parsed is not None and parsed > 0:
+        return float(parsed)
+
+    return float(default)
+
+
+def render_total_section(holdings: pd.DataFrame, exchange_rate):
+    """
+    종합 탭.
+    상단의 총 평가금액 요약은 유지하고,
+    기존 '종합 보유 종목' 영역은 수기 포트폴리오 내용으로 대체합니다.
+    """
+    st.subheader("종합")
+
+    fx_rate = normalize_exchange_rate_value(exchange_rate)
+
+    if holdings is None or holdings.empty:
+        st.info("보유 종목 데이터가 없습니다.")
+        render_manual_portfolio_in_total_tab(fx_rate)
         return
 
-    usdkrw = safe_float(exchange_rate.get("rate"), None)
-    total_df = holdings.copy()
+    df = holdings.copy()
 
-    # 종합 탭은 원화 환산 평가금액도 함께 계산
-    def to_krw(row):
-        amount = safe_float(row.get("eval_amount"), 0)
-        currency = str(row.get("currency", "KRW")).upper()
-        if currency == "USD" and usdkrw:
-            return amount * usdkrw
-        return amount
+    if "eval_amount" not in df.columns:
+        df["eval_amount"] = 0
 
-    total_df["eval_amount_krw"] = total_df.apply(to_krw, axis=1)
+    if "currency" not in df.columns:
+        df["currency"] = "KRW"
 
-    kr_eval = total_df.loc[total_df["currency"].str.upper() == "KRW", "eval_amount"].sum()
-    usd_eval = total_df.loc[total_df["currency"].str.upper() == "USD", "eval_amount"].sum()
-    total_krw = total_df["eval_amount_krw"].sum()
+    if "market_label" not in df.columns:
+        df["market_label"] = df["currency"].map(lambda x: "미장" if x == "USD" else "국장")
+
+    df["eval_amount"] = pd.to_numeric(df["eval_amount"], errors="coerce").fillna(0)
+
+    if "eval_amount_krw" not in df.columns:
+        df["eval_amount_krw"] = df.apply(
+            lambda r: safe_float(r.get("eval_amount"), 0) * (fx_rate if r.get("currency") == "USD" else 1),
+            axis=1,
+        )
+    else:
+        df["eval_amount_krw"] = pd.to_numeric(df["eval_amount_krw"], errors="coerce").fillna(0)
+
+    kr_total = safe_float(df.loc[df["market_label"] == "국장", "eval_amount"].sum(), 0)
+    us_total = safe_float(df.loc[df["market_label"] == "미장", "eval_amount"].sum(), 0)
+    total_krw = safe_float(df["eval_amount_krw"].sum(), 0)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("국장 평가금액", format_money_by_currency(kr_eval, "KRW"))
-    c2.metric("미장 평가금액", format_money_by_currency(usd_eval, "USD"))
+    c1.metric("국장 평가금액", format_money_by_currency(kr_total, "KRW"))
+    c2.metric("미장 평가금액", format_money_by_currency(us_total, "USD"))
     c3.metric("종합 원화환산", format_money_by_currency(total_krw, "KRW"))
 
-    render_holdings_table(total_df, "종합 보유 종목")
+    # 기존 '종합 보유 종목' 자리를 수기 포트폴리오 내용으로 완전 대체
+    render_manual_portfolio_in_total_tab(fx_rate)
 
-    # 종합 차트는 원화환산 평가금액 기준으로 시각화
-    chart_df = total_df.copy()
-    chart_df["eval_amount"] = chart_df["eval_amount_krw"]
-    chart_df["currency"] = "KRW"
-    render_allocation_charts(chart_df, "종합 원화환산")
 
 
 def render_daily_candles(candles_df: pd.DataFrame, holdings: pd.DataFrame, chart_days: int, error_message: Optional[str]):
@@ -1823,16 +2524,111 @@ def render_daily_candles(candles_df: pd.DataFrame, holdings: pd.DataFrame, chart
             st.plotly_chart(fig, use_container_width=True)
 
 
-def render_investor_trends(investor_df: pd.DataFrame, error_message: Optional[str], holdings: Optional[pd.DataFrame] = None, investor_days: int = 3):
-    st.divider()
-    st.subheader(f"국장 보유 종목 최근 {investor_days}거래일 투자자별 순매수")
 
-    st.caption("개인/외국인/기관 순매수는 토스증권 OpenAPI에 현재 제공되지 않아, 국장 종목만 pykrx로 조회합니다. 단위는 원화 거래대금 순매수입니다.")
+
+
+
+def get_investor_days_value(default: int = 3) -> int:
+    value = st.session_state.get("investor_days", default)
+    value = clamp_int(value, 1, 60, default)
+    st.session_state["investor_days"] = value
+    return value
+
+
+def set_investor_days_value(value: int):
+    value = clamp_int(value, 1, 60, 3)
+    st.session_state["investor_days"] = value
+    # 기간 변경 시 상세 화면은 목록으로 돌려 혼동 방지
+    st.session_state["selected_investor_symbol"] = None
+
+
+def force_last_n_rows_by_symbol(df: pd.DataFrame, n_days: int) -> pd.DataFrame:
+    """
+    화면 표시 직전 최종 안전장치.
+    df에 종목별 60행/수개월치가 있어도 symbol별 최근 n_days개만 반환합니다.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    n_days = int(max(1, min(60, int(n_days))))
+    out = df.copy()
+
+    if "symbol" not in out.columns or "date" not in out.columns:
+        return out.head(n_days)
+
+    out["_date_sort"] = pd.to_datetime(out["date"], errors="coerce")
+    out = out.dropna(subset=["_date_sort"])
+
+    if out.empty:
+        return out.drop(columns=["_date_sort"], errors="ignore")
+
+    out = out.sort_values(["symbol", "_date_sort"])
+    out = out.groupby("symbol", group_keys=False).tail(n_days)
+    out = out.sort_values(["symbol", "_date_sort"]).reset_index(drop=True)
+    out["date"] = out["_date_sort"].dt.strftime("%Y-%m-%d")
+    return out.drop(columns=["_date_sort"], errors="ignore")
+
+
+def filter_investor_df_last_n_trading_days(investor_df: pd.DataFrame, n_days: int) -> pd.DataFrame:
+    return force_last_n_rows_by_symbol(investor_df, n_days)
+
+def render_investor_trends(investor_df: pd.DataFrame, error_message: Optional[str], holdings: Optional[pd.DataFrame] = None, investor_days: int = 3):
+    if "investor_days" not in st.session_state:
+        st.session_state["investor_days"] = 3
+
+    st.divider()
+
+    # 숫자 입력을 session_state와 직접 연결
+    current_days = int(max(1, min(60, int(st.session_state.get("investor_days", 3)))))
+
+    # 제목과 거래일 입력을 한 줄로 표시
+    title_left, days_input_col, title_right = st.columns([1.35, 0.9, 1.65], gap="small")
+
+    with title_left:
+        st.markdown(
+            """
+<div class="investor-inline-title">국장 보유 종목 최근</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    with days_input_col:
+        if "investor_days_input_hard" not in st.session_state:
+            st.session_state["investor_days_input_hard"] = current_days
+
+        input_days = st.number_input(
+            "조회 거래일 수",
+            min_value=1,
+            max_value=60,
+            step=1,
+            key="investor_days_input_hard",
+            label_visibility="collapsed",
+        )
+
+    with title_right:
+        st.markdown(
+            """
+<div class="investor-inline-title">거래일 투자자별 순매수</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    if int(input_days) != int(st.session_state.get("investor_days", 3)):
+        st.session_state["investor_days"] = int(input_days)
+        st.session_state["selected_investor_symbol"] = None
+        st.rerun()
+
+    effective_days = int(st.session_state["investor_days"])
+
+    st.caption(f"현재 설정: 최근 {effective_days}거래일만 표시")
 
     if error_message:
         st.warning(error_message)
 
-    if investor_df.empty:
+    # 원본이 60일이어도 display source를 여기서 강제로 N개로 자름
+    df = force_last_n_rows_by_symbol(investor_df, effective_days)
+
+    if df.empty:
         st.info("투자자별 순매수 데이터가 없습니다.")
         return
 
@@ -1840,8 +2636,9 @@ def render_investor_trends(investor_df: pd.DataFrame, error_message: Optional[st
     if holdings is not None and not holdings.empty:
         name_map = holdings.drop_duplicates("symbol").set_index("symbol")["name"].to_dict()
 
-    df = investor_df.copy()
+    df = df.copy()
     df["종목명"] = df["symbol"].map(name_map).fillna(df["symbol"])
+    df = force_last_n_rows_by_symbol(df, effective_days)
 
     value_cols = [c for c in df.columns if c not in ["date", "symbol", "종목명"]]
 
@@ -1851,9 +2648,9 @@ def render_investor_trends(investor_df: pd.DataFrame, error_message: Optional[st
         except Exception:
             return ""
         if numeric > 0:
-            return "color: #ff4b4b; font-weight: 700;"
+            return "color: #ff4b4b; font-weight: 800;"
         if numeric < 0:
-            return "color: #4b8bff; font-weight: 700;"
+            return "color: #4b8bff; font-weight: 800;"
         return ""
 
     def fmt_money(value):
@@ -1862,11 +2659,29 @@ def render_investor_trends(investor_df: pd.DataFrame, error_message: Optional[st
         except Exception:
             return value
 
-    for stock_name, g in df.groupby("종목명", sort=False):
-        symbol_text = g["symbol"].iloc[0]
-        st.markdown(f"#### {stock_name}")
+    selected_symbol = st.session_state.get("selected_investor_symbol")
 
-        display = g[["date"] + value_cols].copy()
+    # 상세 화면
+    if selected_symbol:
+        detail_df = df[df["symbol"] == selected_symbol].copy()
+        detail_df = force_last_n_rows_by_symbol(detail_df, effective_days)
+
+        if detail_df.empty:
+            st.session_state["selected_investor_symbol"] = None
+            st.rerun()
+
+        stock_name = detail_df["종목명"].iloc[0]
+
+        back_col, title_col = st.columns([0.65, 3.35], gap="small")
+        with back_col:
+            if st.button("‹", key=f"investor_back_{selected_symbol}", use_container_width=True):
+                st.session_state["selected_investor_symbol"] = None
+                st.rerun()
+        with title_col:
+            st.markdown(f"### {stock_name}")
+            st.caption(f"{selected_symbol} · 최근 {effective_days}거래일 상세")
+
+        display = detail_df[["date"] + value_cols].copy()
         display = display.rename(columns={"date": "날짜"})
 
         styled = (
@@ -1874,12 +2689,11 @@ def render_investor_trends(investor_df: pd.DataFrame, error_message: Optional[st
             .format({col: fmt_money for col in value_cols})
             .map(color_signed, subset=value_cols)
         )
-
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
-        chart_cols = [c for c in ["개인", "외국인", "기관합계"] if c in g.columns]
+        chart_cols = [c for c in ["개인", "외국인", "기관합계"] if c in detail_df.columns]
         if chart_cols:
-            melted = g.melt(
+            melted = detail_df.melt(
                 id_vars=["date"],
                 value_vars=chart_cols,
                 var_name="투자자",
@@ -1891,12 +2705,67 @@ def render_investor_trends(investor_df: pd.DataFrame, error_message: Optional[st
                 y="순매수금액",
                 color="투자자",
                 barmode="group",
-                title=f"{stock_name} 투자자별 순매수",
+                title=f"{stock_name} 최근 {effective_days}거래일 투자자별 순매수",
                 labels={"date": "날짜", "순매수금액": "순매수금액(원)"},
+            )
+            fig.update_layout(
+                height=360 if is_mobile_mode() else 460,
+                margin=dict(l=10, r=10, t=55, b=20),
             )
             st.plotly_chart(fig, use_container_width=True)
 
-    st.caption("색상 기준: 양수는 빨간색, 음수는 파란색으로 표시합니다.")
+        if st.button("목록으로 돌아가기", key=f"investor_done_{selected_symbol}", use_container_width=True):
+            st.session_state["selected_investor_symbol"] = None
+            st.rerun()
+
+        return
+
+    # 목록 화면
+    for symbol in df["symbol"].drop_duplicates().tolist():
+        g = df[df["symbol"] == symbol].copy()
+        g = force_last_n_rows_by_symbol(g, effective_days)
+
+        if g.empty:
+            continue
+
+        stock_name = g["종목명"].iloc[0]
+
+        name_col, count_col = st.columns([2.7, 1.1], gap="small")
+        with name_col:
+            if st.button(stock_name, key=f"open_investor_detail_{symbol}_{effective_days}", use_container_width=True):
+                st.session_state["selected_investor_symbol"] = symbol
+                st.rerun()
+        with count_col:
+            st.caption(f"{len(g)} / {effective_days}거래일")
+
+        display = g[["date"] + value_cols].copy()
+        display = display.rename(columns={"date": "날짜"})
+
+        # 여기가 핵심: st.dataframe에는 이미 N개로 잘린 display만 들어감
+        styled = (
+            display.style
+            .format({col: fmt_money for col in value_cols})
+            .map(color_signed, subset=value_cols)
+        )
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    st.caption("양수는 빨간색, 음수는 파란색입니다. 그래프는 종목명을 누르면 상세 화면에서 볼 수 있습니다.")
+
+
+
+
+def get_manual_holdings_for_display() -> pd.DataFrame:
+    """
+    종합 탭에서 보여줄 수기 포트폴리오 전용 보유 종목 데이터.
+    API 보유 종목과 합치지 않고, 사용자가 입력한 수기 포트폴리오만 표시합니다.
+    """
+    try:
+        manual_df = normalize_manual_portfolio(st.session_state.get("manual_portfolio", pd.DataFrame()))
+        if manual_df.empty:
+            return pd.DataFrame()
+        return enrich_holdings(manual_df)
+    except Exception:
+        return pd.DataFrame()
 
 
 def render_dashboard(
@@ -1947,7 +2816,9 @@ def render_dashboard(
             use_container_width=True,
         )
 
-    render_investor_trends(investor_df, investor_error, holdings=holdings, investor_days=chart_days if False else st.session_state.get("investor_days", 3))
+    investor_days_value = int(st.session_state.get("investor_days", 3))
+    investor_df = force_last_n_rows_by_symbol(investor_df, int(st.session_state.get("investor_days", 3)))
+    render_investor_trends(investor_df, investor_error, holdings=holdings, investor_days=investor_days_value)
     render_daily_candles(daily_candles_df, holdings, chart_days, daily_candles_error)
 
 
@@ -1966,6 +2837,12 @@ if "include_manual_portfolio" not in st.session_state:
 
 if "mobile_mode" not in st.session_state:
     st.session_state["mobile_mode"] = True
+
+if "selected_manual_symbol" not in st.session_state:
+    st.session_state["selected_manual_symbol"] = None
+
+if "selected_investor_symbol" not in st.session_state:
+    st.session_state["selected_investor_symbol"] = None
 
 if "input_api_key" not in st.session_state:
     st.session_state["input_api_key"] = str(get_secret("TOSS_DEFAULT_API_KEY", ""))
@@ -2018,7 +2895,10 @@ if "last_investor_df" not in st.session_state:
 if "last_investor_error" not in st.session_state:
     st.session_state["last_investor_error"] = None
 
-if "investor_days" not in st.session_state:
+if "investor_days_initialized" not in st.session_state:
+    st.session_state["investor_days"] = 3
+    st.session_state["investor_days_initialized"] = True
+elif "investor_days" not in st.session_state:
     st.session_state["investor_days"] = 3
 
 if "last_refresh_time" not in st.session_state:
@@ -2109,29 +2989,9 @@ with st.sidebar:
     st.session_state["chart_days"] = int(chart_days)
     st.session_state["max_chart_symbols"] = int(max_chart_symbols)
 
-    st.subheader("투자자별 순매수 설정")
-    inv_minus, inv_value, inv_plus = st.columns([1, 2, 1])
-    with inv_minus:
-        if st.button("－", key="investor_days_minus", use_container_width=True):
-            st.session_state["investor_days"] = max(1, int(st.session_state.get("investor_days", 3)) - 1)
-            st.rerun()
-    with inv_value:
-        investor_days_input = st.number_input(
-            "거래일",
-            min_value=1,
-            max_value=60,
-            value=int(st.session_state.get("investor_days", 3)),
-            step=1,
-            label_visibility="collapsed",
-        )
-    with inv_plus:
-        if st.button("＋", key="investor_days_plus", use_container_width=True):
-            st.session_state["investor_days"] = min(60, int(st.session_state.get("investor_days", 3)) + 1)
-            st.rerun()
-    st.session_state["investor_days"] = int(investor_days_input)
-    st.caption(f"현재 설정: 최근 {st.session_state['investor_days']}거래일")
+    # 투자자별 순매수 거래일 수는 해당 섹션 안의 +/- 버튼으로만 조정합니다.
 
-    st.divider()
+
 
     include_manual = st.toggle(
         "수기 포트폴리오 포함",
@@ -2311,23 +3171,23 @@ with st.expander("종목명/종목코드 검색해서 추가", expanded=True):
                 currency = row["currency"]
                 default_price = price_map.get(symbol)
 
-                c1, c2, c3 = st.columns([1.55, 1.25, 0.72], gap="small")
+                c1, c2 = st.columns([3.4, 0.75], gap="small")
                 with c1:
                     st.markdown(
-                        f"""<div class="mobile-search-name">{name}</div>""",
+                        f"""
+<div class="search-row" style="border-bottom:0;">
+  <div class="search-name">{name}</div>
+  <div class="search-price">현재가 {format_money_by_currency(default_price, currency)}</div>
+</div>
+""",
                         unsafe_allow_html=True,
                     )
                 with c2:
-                    st.markdown(
-                        f"""<div class="mobile-search-price">현재가 {format_money_by_currency(default_price, currency)}</div>""",
-                        unsafe_allow_html=True,
-                    )
-                with c3:
                     if st.button("추가", key=f"add_stock_mobile_{symbol}_{i}", use_container_width=True):
                         add_manual_stock_row(row)
                         st.success(f"{name} 추가 완료")
                         st.rerun()
-                st.markdown('<div class="mobile-search-divider"></div>', unsafe_allow_html=True)
+                st.markdown('<div style="border-bottom:1px solid rgba(140,140,160,0.22); margin:0.08rem 0;"></div>', unsafe_allow_html=True)
         else:
             header_cols = st.columns([1.1, 2.5, 0.8, 1.2, 0.8])
             header_cols[0].markdown("**종목코드**")
@@ -2368,7 +3228,7 @@ if st.session_state.get("last_demo_mode", True):
         st.session_state["last_holdings"] = manual_holdings_live
 
 st.markdown("#### 수기 포트폴리오")
-st.caption("수량/단가 변경 시 총액이 바로 계산됩니다.")
+st.caption("수량은 +/-로 조정하고 단가는 접어서 수정합니다.")
 
 quick_df = normalize_manual_portfolio(st.session_state["manual_portfolio"])[
     ["symbol", "name", "market_label", "currency", "quantity", "avg_price", "current_price"]
@@ -2378,6 +3238,9 @@ if quick_df.empty:
     st.info("수량 조정할 수기 종목이 없습니다.")
 else:
     if is_mobile_mode():
+        # 상세 화면 이동 기능 제거: 목록에서 바로 수량 조정, 단가는 expander에서 수정
+        st.session_state["selected_manual_symbol"] = None
+
         for i, row in quick_df.iterrows():
             symbol = row["symbol"]
             currency = row["currency"]
@@ -2385,76 +3248,69 @@ else:
             avg_price = safe_float(row["avg_price"], 0)
             current_price = safe_float(row["current_price"], 0)
 
-            st.markdown(
-                f"""
-<div class="mobile-card">
-  <div class="mobile-card-title">{row["name"]}</div>
-  <div class="mobile-card-sub">{symbol} · {currency}</div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
-
-            q1, q2, q3 = st.columns([0.75, 1.2, 0.75])
-            if q1.button("－", key=f"m_qty_minus_{symbol}_{i}", use_container_width=True):
-                quick_df.loc[i, "quantity"] = max(0, qty - 1)
-                st.session_state["manual_portfolio"] = quick_df.copy()
-                st.rerun()
-
-            q2.markdown(
-                f"""
-<div style="text-align:center; padding-top:0.15rem;">
-  <div style="font-size:0.72rem; color:#777;">수량</div>
-  <div style="font-size:1.15rem; font-weight:800;">{qty:g}</div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
-
-            if q3.button("＋", key=f"m_qty_plus_{symbol}_{i}", use_container_width=True):
-                quick_df.loc[i, "quantity"] = qty + 1
-                st.session_state["manual_portfolio"] = quick_df.copy()
-                st.rerun()
-
-            p1, p2 = st.columns(2)
-            new_avg = p1.number_input(
-                "평균 매입가",
-                min_value=0.0,
-                value=float(avg_price),
-                step=1.0,
-                key=f"m_avg_{symbol}_{i}",
-            )
-            new_current = p2.number_input(
-                "현재가",
-                min_value=0.0,
-                value=float(current_price),
-                step=1.0,
-                key=f"m_current_{symbol}_{i}",
-            )
-
-            if new_avg != avg_price or new_current != current_price:
-                quick_df.loc[i, "avg_price"] = new_avg
-                quick_df.loc[i, "current_price"] = new_current
-                st.session_state["manual_portfolio"] = quick_df.copy()
-                st.rerun()
-
-            buy_amount = qty * new_avg
-            eval_amount = qty * new_current
+            buy_amount = qty * avg_price
+            eval_amount = qty * current_price
             profit = eval_amount - buy_amount
+            profit_rate = (profit / buy_amount * 100) if buy_amount else 0
 
-            st.markdown(
-                f"""
-<div class="mobile-card" style="margin-top:-0.15rem;">
-  <div class="mobile-card-grid">
-    <div><div class="mobile-label">총 매입</div><div class="mobile-value">{format_money_by_currency(buy_amount, currency)}</div></div>
-    <div><div class="mobile-label">총 평가</div><div class="mobile-value">{format_money_by_currency(eval_amount, currency)}</div></div>
-    <div><div class="mobile-label">평가손익</div><div class="{signed_class(profit)}">{format_money_by_currency(profit, currency)}</div></div>
-    <div><div class="mobile-label">수익률</div><div class="{signed_class(profit)}">{format_rate_percent((profit / buy_amount * 100) if buy_amount else 0)}</div></div>
-  </div>
+            minus_col, name_col, value_col, plus_col = st.columns([0.42, 1.7, 1.25, 0.42], gap="small")
+
+            with minus_col:
+                if st.button("－", key=f"mobile_qty_minus_{symbol}_{i}", use_container_width=True):
+                    quick_df.loc[i, "quantity"] = max(0, qty - 1)
+                    st.session_state["manual_portfolio"] = quick_df.copy()
+                    st.rerun()
+
+            with name_col:
+                st.markdown(
+                    f"""
+<div class="portfolio-name">{row['name']}</div>
+<div class="portfolio-sub">{qty:g}주</div>
+""",
+                    unsafe_allow_html=True,
+                )
+
+            with value_col:
+                st.markdown(
+                    f"""
+<div style="padding-top:0.25rem;">
+  <div class="portfolio-value">{format_money_by_currency(eval_amount, currency)}</div>
+  <div class="portfolio-pnl {signed_class(profit)}">{format_money_by_currency(profit, currency)} ({profit_rate:+.1f}%)</div>
 </div>
 """,
-                unsafe_allow_html=True,
-            )
+                    unsafe_allow_html=True,
+                )
+
+            with plus_col:
+                if st.button("＋", key=f"mobile_qty_plus_{symbol}_{i}", use_container_width=True):
+                    quick_df.loc[i, "quantity"] = qty + 1
+                    st.session_state["manual_portfolio"] = quick_df.copy()
+                    st.rerun()
+
+            with st.expander(f"{row['name']} 단가 수정", expanded=False):
+                p1, p2 = st.columns(2)
+                new_avg = p1.number_input(
+                    "평균 매입가",
+                    min_value=0.0,
+                    value=float(avg_price),
+                    step=1.0,
+                    key=f"mobile_avg_price_inline_{symbol}_{i}",
+                )
+                new_current = p2.number_input(
+                    "현재가",
+                    min_value=0.0,
+                    value=float(current_price),
+                    step=1.0,
+                    key=f"mobile_current_price_inline_{symbol}_{i}",
+                )
+
+                if new_avg != avg_price or new_current != current_price:
+                    quick_df.loc[i, "avg_price"] = new_avg
+                    quick_df.loc[i, "current_price"] = new_current
+                    st.session_state["manual_portfolio"] = quick_df.copy()
+                    st.rerun()
+
+            st.markdown('<div class="mobile-search-divider"></div>', unsafe_allow_html=True)
 
     else:
         header = st.columns([1.0, 1.8, 0.45, 0.7, 0.45, 1.1, 1.1, 1.1, 1.1])
@@ -2520,32 +3376,6 @@ else:
             eval_amount = qty * new_current
             cols[7].write(format_money_by_currency(buy_amount, currency))
             cols[8].write(format_money_by_currency(eval_amount, currency))
-col_refresh, col_save, col_reset = st.columns([1.6, 1, 2.7])
-with col_refresh:
-    if st.button("현재가/환율 실제값 갱신", use_container_width=True):
-        updated_manual, refresh_error = refresh_manual_current_prices()
-        if refresh_error:
-            st.warning(refresh_error)
-        else:
-            st.success("현재가와 원달러 환율 갱신 완료")
-        st.rerun()
-
-with col_save:
-    if st.button("수기 저장", use_container_width=True):
-        st.session_state["manual_portfolio"] = normalized_manual_editor.copy()
-        st.success("수기 포트폴리오 저장 완료")
-        st.rerun()
-
-with col_reset:
-    if st.button("수기 포트폴리오 초기화", use_container_width=True):
-        st.session_state["manual_portfolio"] = initial_manual_portfolio()
-        st.success("초기화 완료")
-        st.rerun()
-
-if st.session_state.get("last_refresh_time"):
-    st.caption(f"마지막 실제값 갱신: {st.session_state['last_refresh_time']}")
-
-
 # =========================
 # 메인 화면
 # =========================
